@@ -142,7 +142,7 @@ huaweicloud-skill/
 
 ## 前置条件
 
-- [华为云 KooCLI (hcloud)](https://support.huaweicloud.com/cli/index.html) 已安装并配置
+- 华为云 KooCLI (hcloud) 已安装并配置
 - Python 3.8+
 - 已配置华为云认证（AK/SK 或 profile）
 
