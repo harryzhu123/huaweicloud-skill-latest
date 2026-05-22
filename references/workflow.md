@@ -1,0 +1,132 @@
+# Huawei CLI Workflow
+
+这是 `huaweicloud-skill` 的标准执行流程。默认不要跳步骤。
+
+## Phase A: Clarify Intent
+
+先把用户任务归类为下面三类之一：
+
+- 查询类
+  - 例如列实例、查规格、查售卖策略、查配置
+- 规划类
+  - 例如创建前参数准备、依赖梳理、排查路径设计
+- 变更类
+  - 例如创建、修改、删除、启停、扩缩容
+
+## Phase B: Inspect Context
+
+默认先运行：
+
+```bash
+python3 scripts/hcloud_context_inspect.py --pretty
+```
+
+目标：
+
+- 确认 `hcloud` 是否存在
+- 确认当前 profile 是否存在
+- 确认默认 region、project、domain 是否已配置
+- 确认是否处于 offline mode
+- 确认本地 meta cache 是否存在
+
+如果上下文不完整，再考虑 `hcloud configure show` 或 `hcloud configure list`。
+
+## Phase C: Discover Service and Operation
+
+标准顺序：
+
+1. `python3 scripts/hcloud_meta_lookup.py --service=<service> --pretty`
+2. `hcloud --help`
+3. `hcloud <service> --help`
+4. `hcloud <service> <operation> --help`
+
+原则：
+
+- 不要先猜 operation 名。
+- 先看本地 meta cache 里有没有现成线索。
+- 先通过 service 级帮助确认当前 CLI 是否支持目标服务。
+- 当前 CLI 的 operation 清单比记忆更可信。
+
+## Phase D: Build a Stable Command
+
+### 查询类默认规则
+
+- 默认加 `--cli-output=json`
+- 结果过大时优先：
+  - 加 `limit`
+  - 加过滤参数
+  - 加 `--cli-query`
+
+### 变更类默认规则
+
+- 默认先 `--dryrun`
+- 优先把复杂 body 放进 `--cli-jsonInput`
+- 真执行前先补齐：
+  - region
+  - project
+  - 依赖资源
+  - 幂等和回滚考虑
+
+## Phase E: Execute
+
+推荐优先使用统一包装脚本：
+
+```bash
+python3 scripts/hcloud_safe_exec.py ...
+```
+
+原因：
+
+- 有统一 JSON 结果
+- 有输出脱敏
+- 有错误类型识别
+- 更适合后续自动化处理
+
+## Phase F: Validate
+
+执行后必须做结果判断：
+
+- 非空 JSON 返回：
+  - 校验核心字段
+  - 只提取用户关心的部分
+- 空响应体：
+  - 必要时加 `--debug`
+  - 查看状态码
+- 长任务：
+  - 谨慎考虑 `--cli-waiter`
+
+## 三层回退策略
+
+当 operation 帮助或 live metadata 失败时，按下面顺序回退：
+
+1. 当前命令本身返回的 service 级帮助
+2. 本地 `~/.hcloud/metaRepo` 缓存
+3. `references/` 中整理过的规则和 playbook
+4. 原始 `materials/` 文档
+
+不要在没有证据时直接猜参数。
+
+## 查询类与变更类的不同交付方式
+
+### 查询类
+
+- 默认给结论
+- 必要时给关键字段
+- 大结果默认先筛选或汇总，不直接把整份结果塞回对话
+
+### 变更类
+
+- 默认给执行前提和变更计划
+- 真执行后给：
+  - 是否成功
+  - 关键返回字段
+  - 后续验证建议
+
+## 何时停止并向用户确认
+
+在以下场景，应暂停自动推进并向用户确认：
+
+- 不可逆删除
+- 真实创建或修改会产生费用
+- 当前配置范围可能不是用户预期的账号或项目
+- 关键参数有多个候选且影响较大

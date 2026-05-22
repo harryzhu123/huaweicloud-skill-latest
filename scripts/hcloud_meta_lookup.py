@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+"""Inspect local hcloud metadata cache and expose cached Huawei Cloud service details."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any
+
+
+def load_json(path: Path) -> Any:
+    """Return parsed JSON content from a file."""
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def normalize_token(value: str) -> str:
+    """Return a lowercase alphanumeric-only token for loose matching."""
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def collect_service_catalog(meta_repo: Path) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Load services_en.json and build an index keyed by normalized service name."""
+    services_file = meta_repo / "services_en.json"
+    if not services_file.exists():
+        return [], {}
+
+    services_data = load_json(services_file)
+    items = services_data.get("items", [])
+    service_index: dict[str, dict[str, Any]] = {}
+    for item in items:
+        service = item.get("Service", {})
+        name = service.get("Text", "")
+        if name:
+            service_index[normalize_token(name)] = item
+    return items, service_index
+
+
+def collect_template_dirs(meta_repo: Path) -> dict[str, Path]:
+    """Map normalized template service names to their directory paths."""
+    template_root = meta_repo / "template"
+    if not template_root.exists():
+        return {}
+
+    template_dirs: dict[str, Path] = {}
+    for child in template_root.iterdir():
+        if child.is_dir():
+            template_dirs[normalize_token(child.name)] = child
+    return template_dirs
+
+
+def summarize_service(item: dict[str, Any], template_dir: Path | None) -> dict[str, Any]:
+    """Return a compact service summary."""
+    service = item.get("Service", {})
+    return {
+        "name": service.get("Text"),
+        "description": service.get("Description"),
+        "category": item.get("Category"),
+        "is_global": item.get("IsGlobal"),
+        "cached_locally": template_dir is not None,
+        "template_dir": template_dir.name if template_dir else None,
+    }
+
+
+def load_cached_operations(template_dir: Path | None) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Load cached operation summaries from apis_en.json when available."""
+    if template_dir is None:
+        return [], {}
+
+    apis_file = template_dir / "apis_en.json"
+    if not apis_file.exists():
+        return [], {}
+
+    apis_data = load_json(apis_file)
+    operations: list[dict[str, Any]] = []
+    operation_index: dict[str, dict[str, Any]] = {}
+    for _, raw_entry in apis_data.get("apiList", {}).items():
+        name = raw_entry.get("Name")
+        if not name:
+            continue
+        entry = {
+            "name": name,
+            "versions": raw_entry.get("Versions", []),
+            "suggests": raw_entry.get("Suggests", {}),
+            "detail_cached": False,
+        }
+        operations.append(entry)
+        operation_index[normalize_token(name)] = entry
+
+    operations.sort(key=lambda entry: entry["name"])
+
+    for detail_file in template_dir.glob("*_en.yaml"):
+        operation_name = detail_file.name[:-8]
+        normalized = normalize_token(operation_name)
+        if normalized in operation_index:
+            operation_index[normalized]["detail_cached"] = True
+
+    return operations, operation_index
+
+
+def load_operation_detail(template_dir: Path | None, operation_name: str) -> dict[str, Any] | None:
+    """Load cached per-operation detail from a local metadata file when available."""
+    if template_dir is None:
+        return None
+
+    target = normalize_token(operation_name)
+    for detail_file in template_dir.glob("*_en.yaml"):
+        candidate_name = detail_file.name[:-8]
+        if normalize_token(candidate_name) != target:
+            continue
+        try:
+            detail = load_json(detail_file)
+        except json.JSONDecodeError:
+            return {
+                "detail_file": detail_file.name,
+                "detail_file_format": "unparsed",
+                "error": "Cached detail file exists but could not be parsed as JSON.",
+            }
+
+        params = detail.get("Params", [])
+        request = detail.get("Request", {})
+        return {
+            "detail_file": detail_file.name,
+            "description": detail.get("Description"),
+            "group_id": detail.get("GroupId"),
+            "cli_version": detail.get("CLIVersion"),
+            "request": {
+                "method": request.get("Method"),
+                "path": request.get("Path"),
+                "scheme": request.get("Scheme"),
+                "content_type": request.get("ContentType"),
+                "has_body_params": request.get("HasBodyParams"),
+            },
+            "params": [
+                {
+                    "name": param.get("Name", []),
+                    "required": param.get("Required"),
+                    "position": param.get("Position"),
+                    "type": param.get("ParamType"),
+                    "enum": param.get("EnumValue"),
+                    "default": param.get("Default"),
+                }
+                for param in params
+            ],
+            "param_count": len(params),
+        }
+    return None
+
+
+def load_endpoints(template_dir: Path | None, region: str | None) -> dict[str, Any] | None:
+    """Load cached endpoint data and optionally filter by region."""
+    if template_dir is None:
+        return None
+
+    endpoints_file = template_dir / "endpoints_en.json"
+    if not endpoints_file.exists():
+        return None
+
+    endpoints_data = load_json(endpoints_file)
+    groups = endpoints_data.get("groupInfo", [])
+    if region:
+        groups = [group for group in groups if group.get("region") == region]
+
+    return {
+        "service": endpoints_data.get("service"),
+        "update_time": endpoints_data.get("updateTime"),
+        "region_count": len(groups),
+        "groups": groups,
+    }
+
+
+def run_service_help(service_name: str, timeout: int) -> dict[str, Any]:
+    """Try `hcloud <service> --help` and parse visible operation names when possible."""
+    binary = shutil.which("hcloud")
+    if not binary:
+        return {
+            "attempted": False,
+            "available": False,
+            "operations": [],
+            "error": "hcloud binary not found in PATH.",
+        }
+
+    completed = subprocess.run(
+        [binary, service_name, "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+    )
+    stdout = completed.stdout
+    operations: list[str] = []
+    capture = False
+    for raw_line in stdout.splitlines():
+        line = raw_line.rstrip()
+        if line.strip() == "Available Operations:":
+            capture = True
+            continue
+        if capture:
+            if not line.strip():
+                continue
+            if line.startswith("Run `hcloud "):
+                break
+            if line.startswith("  "):
+                operations.append(line.strip())
+            else:
+                break
+
+    return {
+        "attempted": True,
+        "available": bool(operations),
+        "return_code": completed.returncode,
+        "operations": operations,
+        "stdout": stdout.strip(),
+        "stderr": completed.stderr.strip(),
+    }
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--service", help="Service name, for example ECS.")
+    parser.add_argument("--operation", help="Operation name, for example ListFlavors.")
+    parser.add_argument("--list-services", action="store_true", help="List known services from services_en.json.")
+    parser.add_argument("--region", help="Optional region filter for endpoint data.")
+    parser.add_argument("--limit", type=int, default=50, help="Maximum number of services or operations returned.")
+    parser.add_argument(
+        "--allow-help-fallback",
+        action="store_true",
+        help="If local cache is incomplete, try `hcloud <service> --help` and parse visible operations.",
+    )
+    parser.add_argument(
+        "--help-timeout",
+        type=int,
+        default=20,
+        help="Timeout in seconds for service help fallback.",
+    )
+    parser.add_argument("--pretty", action="store_true", help="Pretty-print the JSON result.")
+    return parser.parse_args()
+
+
+def build_result(args: argparse.Namespace) -> dict[str, Any]:
+    """Build the local metadata lookup result."""
+    meta_repo = Path.home() / ".hcloud" / "metaRepo"
+    services, service_index = collect_service_catalog(meta_repo)
+    template_dirs = collect_template_dirs(meta_repo)
+
+    if args.list_services:
+        results = []
+        for item in services[: args.limit]:
+            name = item.get("Service", {}).get("Text", "")
+            template_dir = template_dirs.get(normalize_token(name))
+            results.append(summarize_service(item, template_dir))
+        return {
+            "meta_repo_exists": meta_repo.exists(),
+            "service_count": len(services),
+            "services": results,
+        }
+
+    if not args.service:
+        raise ValueError("Provide --service or use --list-services.")
+
+    normalized_service = normalize_token(args.service)
+    service_item = service_index.get(normalized_service)
+    template_dir = template_dirs.get(normalized_service)
+    operations, operation_index = load_cached_operations(template_dir)
+
+    result: dict[str, Any] = {
+        "meta_repo_exists": meta_repo.exists(),
+        "service_found": service_item is not None,
+        "service": summarize_service(service_item, template_dir) if service_item else None,
+        "cached_operations_count": len(operations),
+        "cached_operations": operations[: args.limit],
+        "endpoints": load_endpoints(template_dir, args.region),
+    }
+
+    if args.allow_help_fallback:
+        service_name = service_item.get("Service", {}).get("Text", args.service) if service_item else args.service
+        result["service_help_fallback"] = run_service_help(service_name, args.help_timeout)
+
+    if args.operation:
+        normalized_operation = normalize_token(args.operation)
+        cached_operation = operation_index.get(normalized_operation)
+        result["operation_found_in_cache_index"] = cached_operation is not None
+        result["operation"] = cached_operation
+        result["operation_detail"] = load_operation_detail(template_dir, args.operation)
+
+    return result
+
+
+def main() -> int:
+    """Run the metadata lookup and print JSON output."""
+    args = parse_args()
+    result = build_result(args)
+    if args.pretty:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
