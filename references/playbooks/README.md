@@ -8,6 +8,14 @@
   - 创建 ECS 前的依赖确认、规格和售卖策略检查。
 - `ecs-inventory.md`
   - 查询当前 scope 下的 ECS 实例并整理成可读摘要。
+- `ecs-user-data-service-readiness.md`
+  - 用 cloud-init/user_data 安装并启动 ECS 内服务，生成可验收 readiness。
+- `elb-http-backend-readiness.md`
+  - 创建和排查 HTTP ELB 后端，处理 member `CONNECT_FAILED` / `OFFLINE`。
+- `docker-remote-api-readiness.md`
+  - 安装 Docker、开放 Remote API 并用协议探测验证 daemon。
+- `resource-idempotency-reconcile.md`
+  - 按资源名做幂等选择和修复，避免重复创建同名资源。
 - `iam-context-bootstrap.md`
   - 在执行云侧业务前先确认当前 profile、region、project 和认证上下文。
 - `ims-image-discovery.md`
@@ -23,5 +31,8 @@
 
 - 目标是查现网 ECS：先看 `ecs-inventory.md`
 - 目标是创建 ECS：先看 `ecs-create-readiness.md`
+- 目标是修复或续跑已有命名资源：先看 `resource-idempotency-reconcile.md`
+- 目标是 ECS 上部署 Web/Docker 服务：同时看 `ecs-user-data-service-readiness.md`
+- 目标是 ELB 后端健康：先看 `elb-http-backend-readiness.md`
 - 卡在上下文或认证：先看 `iam-context-bootstrap.md`
 - 卡在镜像、密钥对或网络依赖：按 `ims`、`kps`、`vpc` 对应 playbook 进入
