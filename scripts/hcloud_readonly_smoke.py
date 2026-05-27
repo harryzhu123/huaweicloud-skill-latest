@@ -9,9 +9,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import hcloud_resource_discovery
+import hcloud_obs_readonly
 
 
-DEFAULT_SERVICES = ("ECS", "EIP", "VPC", "IMS", "KPS", "ELB", "EVS", "NAT", "RDS", "CCE", "CDN", "DNS", "SCM", "CES")
+DEFAULT_SERVICES = ("ECS", "EIP", "VPC", "IMS", "KPS", "ELB", "EVS", "NAT", "RDS", "CCE", "CDN", "DNS", "SCM", "OBS", "CES")
 PREFERRED_SMOKE_OPERATIONS = {
     "ECS": "ListServersDetails",
     "EIP": "ListPublicips",
@@ -26,6 +27,7 @@ PREFERRED_SMOKE_OPERATIONS = {
     "CDN": "ListDomains",
     "DNS": "ListRecordSets",
     "SCM": "ListCertificates",
+    "OBS": "ListBuckets",
     "CES": "ListMetrics",
 }
 
@@ -74,6 +76,21 @@ def discovery_args(args: argparse.Namespace, service: str, operation: str | None
     )
 
 
+def obs_args(args: argparse.Namespace, operation: str | None) -> SimpleNamespace:
+    """Build an argparse-like object for OBS obsutil read-only checks."""
+    return SimpleNamespace(
+        operation=operation,
+        bucket=None,
+        endpoint=getattr(args, "obs_endpoint", None),
+        config=getattr(args, "obs_config", None),
+        payer=getattr(args, "obs_payer", None),
+        limit=args.limit,
+        arg=[],
+        execute=False,
+        timeout=args.timeout,
+    )
+
+
 def build_smoke_plan(args: argparse.Namespace) -> dict[str, Any]:
     """Build or run read-only smoke checks for selected services."""
     registry = load_registry()
@@ -106,7 +123,11 @@ def build_smoke_plan(args: argparse.Namespace) -> dict[str, Any]:
             )
             continue
 
-        plan = hcloud_resource_discovery.build_plan(discovery_args(args, service, operation))
+        runner = entry.get("query_runner") or "scripts/hcloud_resource_discovery.py"
+        if runner == "scripts/hcloud_obs_readonly.py":
+            plan = hcloud_obs_readonly.build_plan(obs_args(args, operation))
+        else:
+            plan = hcloud_resource_discovery.build_plan(discovery_args(args, service, operation))
         check: dict[str, Any] = {
             "service": service,
             "operation": operation,
@@ -114,13 +135,24 @@ def build_smoke_plan(args: argparse.Namespace) -> dict[str, Any]:
             "stage": "plan",
             "success": plan.get("success", False),
             "plan": plan,
+            "runner": runner,
         }
         if plan.get("success") and args.execute:
-            executed = hcloud_resource_discovery.execute_plan(plan, args.timeout)
-            check["stage"] = "execute"
-            check["execution_success"] = executed.get("success", False)
-            check["results"] = executed.get("results", [])
-            check["success"] = bool(executed.get("success"))
+            if runner == "scripts/hcloud_obs_readonly.py":
+                exec_args = obs_args(args, operation)
+                exec_args.execute = True
+                executed_obs = hcloud_obs_readonly.build_plan(exec_args)
+                check["stage"] = "execute"
+                check["execution_success"] = executed_obs.get("execution_success", False)
+                check["result"] = executed_obs.get("result")
+                check["summary"] = executed_obs.get("summary", {})
+                check["success"] = bool(executed_obs.get("success"))
+            else:
+                executed = hcloud_resource_discovery.execute_plan(plan, args.timeout)
+                check["stage"] = "execute"
+                check["execution_success"] = executed.get("success", False)
+                check["results"] = executed.get("results", [])
+                check["success"] = bool(executed.get("success"))
         checks.append(check)
 
     plan_success = all(item.get("success") for item in checks) if args.strict or not args.execute else True
@@ -147,6 +179,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-id", help="Optional project_id for generated commands.")
     parser.add_argument("--profile", help="Optional cli-profile for generated commands.")
     parser.add_argument("--limit", type=int, default=20, help="Optional limit for operations that support it.")
+    parser.add_argument("--obs-endpoint", help="Optional OBS endpoint for hcloud obs checks.")
+    parser.add_argument("--obs-config", help="Optional obsutil config path for hcloud obs checks.")
+    parser.add_argument("--obs-payer", help="Optional OBS request payer for hcloud obs checks.")
     parser.add_argument("--execute", action="store_true", help="Execute read-only checks through hcloud_safe_exec.py.")
     parser.add_argument("--timeout", type=int, default=120, help="Timeout per executed command.")
     parser.add_argument("--strict", action="store_true", help="Return failure when any selected check fails.")

@@ -43,8 +43,9 @@
 - EIP：EIP、带宽、公网 IP 池、配额等 list/count 型发现入口，以及 `ShowPublicip`
 - ELB / EVS / NAT / RDS：已登记常用 list 查询和第一层 show/detail 查询；本地缺少 operation detail 时通过显式参数白名单保守执行
 - CCE / CDN / DNS / SCM / CES：已按离线验证集登记最小查询入口；其中 CDN、DNS、SCM、CCE 已支持部分目标型查询
+- OBS：不走普通 `hcloud <Service> <Operation>` 元数据路径，改用 KooCLI 集成的 `hcloud obs`/obsutil 适配器，支持 bucket list、bucket stat、lifecycle/policy get 和 planner-only lifecycle/policy/bucket 变更计划
 
-这些非 ECS 链路适合用于真实变更前的上下文确认、资源发现和风险边界梳理；在本地 operation 元数据不完整时，不应宣称已经具备和 ECS 一样完整的参数级执行能力。`service-registry.json` 中的 `resource_query_operations` 只表示“已知资源 ID 后可查询”，不会被通用 discovery 默认执行。查询脚本会宽松匹配大小写或数据集里的 operation 写法，例如 `showvpc` 会解析到 `ShowVpc`。对 CDN 这类 KooCLI 只接受固定区域集合的服务，registry 会记录 `supported_cli_regions` 和 `preferred_cli_region`，discovery/smoke 会据此生成可执行的查询命令。
+这些非 ECS 链路适合用于真实变更前的上下文确认、资源发现和风险边界梳理；在本地 operation 元数据不完整时，不应宣称已经具备和 ECS 一样完整的参数级执行能力。`service-registry.json` 中的 `resource_query_operations` 只表示“已知资源 ID 后可查询”，不会被通用 discovery 默认执行。查询脚本会宽松匹配大小写或数据集里的 operation 写法，例如 `showvpc` 会解析到 `ShowVpc`。对 CDN 这类 KooCLI 只接受固定区域集合的服务，registry 会记录 `supported_cli_regions` 和 `preferred_cli_region`，discovery/smoke 会据此生成可执行的查询命令。OBS 这类非 OpenAPI-style 命令会通过 registry 的专用 runner 路由到 `hcloud_obs_readonly.py` / `hcloud_obs_change_plan.py`。
 
 ## 在常用 Agent 中使用
 
@@ -160,6 +161,9 @@ huaweicloud-skill/
 │   ├── hcloud_meta_lookup.py       # 本地元数据查询
 │   ├── hcloud_resource_discovery.py # service registry 驱动的只读资源发现
 │   ├── hcloud_resource_query.py     # 显式参数的资源级只读查询
+│   ├── hcloud_obs_readonly.py        # OBS hcloud obs/obsutil 只读适配器
+│   ├── hcloud_obs_change_plan.py     # OBS planner-only 变更计划
+│   ├── hcloud_resource_detail_probe.py # list-then-detail 只读抽样
 │   ├── hcloud_service_readiness.py  # 多服务只读 readiness 检查
 │   ├── hcloud_readonly_smoke.py     # 多服务只读 smoke 查询计划/执行
 │   ├── hcloud_change_plan.py        # 通用变更风险计划
@@ -219,10 +223,12 @@ python3 scripts/check_question_coverage.py --pretty
 python3 scripts/hcloud_readonly_smoke.py --service EIP --service VPC --region=<region> --project-id=<project-id> --pretty
 python3 scripts/hcloud_service_readiness.py --service VPC --service ELB --region=<region> --project-id=<project-id> --pretty
 python3 scripts/hcloud_resource_query.py --service EIP --operation ShowPublicip --param publicip_id=<publicip-id> --region=<region> --project-id=<project-id> --pretty
+python3 scripts/hcloud_obs_readonly.py --operation ListBuckets --limit=20 --pretty
+python3 scripts/hcloud_resource_detail_probe.py --service EVS --service NAT --region=<region> --execute --pretty
 python3 scripts/hcloud_readonly_smoke.py --service CDN --region=<region> --project-id=<project-id> --execute --strict --pretty
 ```
 
-`check_question_coverage.py` 默认读取相邻项目中的 `agent_with_massive_apis/data/huawei_cloud/generated_questions`，并在存在时读取 `agent_with_massive_apis/data/huawei_cloud/data-by-changping/data.xlsx`。如果只单独 checkout 本 skill 仓库，可用 `--questions-dir` 和 `--xlsx-path` 指向本地数据路径，或用 `--skip-xlsx` 跳过 Excel 验证集。默认每个出现在问题集里的服务至少需要 10% registry 覆盖率，可用 `--default-min-registered-ratio` 或 `--min-registered-ratio SERVICE=RATIO` 调整。Excel 验证集里的已注册 operation 还会检查是否存在可执行路径：list 查询走 `hcloud_resource_discovery.py`，需要资源 ID 的 show/list 查询走 `hcloud_resource_query.py`，变更类只允许 planner-only。
+`check_question_coverage.py` 默认读取相邻项目中的 `agent_with_massive_apis/data/huawei_cloud/generated_questions`，并在存在时读取 `agent_with_massive_apis/data/huawei_cloud/data-by-changping/data.xlsx`。如果只单独 checkout 本 skill 仓库，可用 `--questions-dir` 和 `--xlsx-path` 指向本地数据路径，或用 `--skip-xlsx` 跳过 Excel 验证集。默认每个出现在问题集里的服务至少需要 10% registry 覆盖率，可用 `--default-min-registered-ratio` 或 `--min-registered-ratio SERVICE=RATIO` 调整。Excel 验证集里的已注册 operation 还会检查是否存在可执行路径：普通 list 查询走 registry 的 `query_runner`，需要资源 ID 的 show/list 查询走 `resource_query_runner`，变更类只允许 planner-only。
 
 ## 前置条件
 

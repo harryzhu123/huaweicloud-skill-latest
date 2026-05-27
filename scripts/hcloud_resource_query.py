@@ -235,6 +235,17 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
             "error": f"Service is not registered: {service}",
             "available_services": sorted(registry.get("services", {})),
         }
+    resource_query_runner = entry.get("resource_query_runner")
+    if resource_query_runner and resource_query_runner != "scripts/hcloud_resource_query.py":
+        return {
+            "success": False,
+            "service": service,
+            "operation": aliased_operation,
+            "requested_operation": requested_operation,
+            "error": "Service uses a dedicated resource query runner and is not compatible with generic resource query.",
+            "resource_query_runner": resource_query_runner,
+            "available_resource_query_operations": entry.get("resource_query_operations", []),
+        }
 
     operation = resolve_registered_operation(entry, aliased_operation)
     if operation is None:

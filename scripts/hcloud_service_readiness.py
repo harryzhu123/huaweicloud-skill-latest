@@ -10,11 +10,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import hcloud_resource_discovery
+import hcloud_obs_readonly
 import hcloud_resource_query
 import hcloud_resource_verify
 
 
-DEFAULT_SERVICES = ("ECS", "VPC", "RDS", "IMS", "EVS", "EIP", "ELB", "NAT", "KPS", "IAM", "CCE", "CDN", "DNS", "SCM", "CES")
+DEFAULT_SERVICES = ("ECS", "VPC", "RDS", "IMS", "EVS", "EIP", "ELB", "NAT", "KPS", "IAM", "CCE", "CDN", "DNS", "SCM", "OBS", "CES")
 READINESS_PROFILES = {
     "ECS": [
         {"operation": "ListCloudServers"},
@@ -85,6 +86,10 @@ READINESS_PROFILES = {
         {"operation": "ListCertificates"},
         {"operation": "ShowCertificate", "required_targets": ["certificate_id"]},
     ],
+    "OBS": [
+        {"operation": "ListBuckets"},
+        {"operation": "GetBucketLifecycle", "required_targets": ["bucket"]},
+    ],
     "CES": [
         {"operation": "ListMetrics"},
     ],
@@ -134,6 +139,21 @@ def query_args(args: argparse.Namespace, service: str, operation: str, params: l
         execute=False,
         timeout=args.timeout,
         allow_sensitive_read=False,
+    )
+
+
+def obs_args(args: argparse.Namespace, operation: str, targets: dict[str, str]) -> SimpleNamespace:
+    """Build arguments for OBS obsutil read-only checks."""
+    return SimpleNamespace(
+        operation=operation,
+        bucket=targets.get("bucket"),
+        endpoint=getattr(args, "obs_endpoint", None),
+        config=getattr(args, "obs_config", None),
+        payer=getattr(args, "obs_payer", None),
+        limit=args.limit,
+        arg=[],
+        execute=False,
+        timeout=args.timeout,
     )
 
 
@@ -194,6 +214,34 @@ def build_check(
             "missing_targets": missing_targets,
             "reason": "Readiness check requires explicit target parameter(s).",
         }
+
+    runner = service_entry.get("query_runner") or "scripts/hcloud_resource_discovery.py"
+    resource_runner = service_entry.get("resource_query_runner") or "scripts/hcloud_resource_query.py"
+    if runner == "scripts/hcloud_obs_readonly.py" or resource_runner == "scripts/hcloud_obs_readonly.py":
+        plan = hcloud_obs_readonly.build_plan(obs_args(args, operation, targets))
+        check = {
+            "service": service,
+            "operation": operation,
+            "stage": "plan",
+            "success": plan.get("success", False),
+            "skipped": False,
+            "plan": plan,
+            "runner": "scripts/hcloud_obs_readonly.py",
+        }
+        if plan.get("success") and args.execute:
+            exec_args = obs_args(args, operation, targets)
+            exec_args.execute = True
+            executed = hcloud_obs_readonly.build_plan(exec_args)
+            check.update(
+                {
+                    "stage": "execute",
+                    "execution_success": executed.get("execution_success", False),
+                    "result": executed.get("result"),
+                    "summary": executed.get("summary", {}),
+                    "success": bool(executed.get("success")),
+                }
+            )
+        return check
 
     if operation_is_generic_query(service_entry, operation, required_targets):
         plan = hcloud_resource_discovery.build_plan(discovery_args(args, service, operation))
@@ -313,6 +361,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-id", help="Optional project_id for generated commands.")
     parser.add_argument("--profile", help="Optional cli-profile for generated commands.")
     parser.add_argument("--limit", type=int, default=20, help="Optional limit for operations that support it.")
+    parser.add_argument("--obs-endpoint", help="Optional OBS endpoint for hcloud obs checks.")
+    parser.add_argument("--obs-config", help="Optional obsutil config path for hcloud obs checks.")
+    parser.add_argument("--obs-payer", help="Optional OBS request payer for hcloud obs checks.")
     parser.add_argument("--execute", action="store_true", help="Execute readiness checks through hcloud_safe_exec.py.")
     parser.add_argument("--timeout", type=int, default=120, help="Timeout per executed command.")
     parser.add_argument("--strict", action="store_true", help="Return failure when any executed check fails.")

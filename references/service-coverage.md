@@ -27,11 +27,13 @@
 | `EVS` | Low | 已登记常用查询入口、volume/snapshot 详情和 planner-only 变更入口 | service 可见但本地没有 operation detail；云硬盘挂载、扩容、格式化仍需云侧和 ECS 内双重验收 |
 | `NAT` | Low | 已登记常用查询入口和 NAT/DNAT/SNAT 详情查询 | service 可见但本地没有 operation detail；NAT 创建、绑定和删除仍未开放通用变更 |
 | `RDS` | Low | 已登记常用查询入口和 planner-only 变更入口 | service 可见但本地没有 operation detail；RDS detail 查询通常需要实例 ID 和引擎相关参数 |
+| `OBS` | Low | 走 `hcloud obs`/obsutil 专用适配器 | 不在普通 KooCLI service metadata 中；已支持 bucket list、bucket stat、lifecycle/policy get 和 planner-only bucket/lifecycle/policy 变更计划 |
 | `CCE` / `CDN` / `DNS` / `SCM` / `CES` | Low | 已登记最小验证入口，部分服务支持目标查询 | 来自人工 E2E 验证集和本地 service 存在性检查，仅用于前置发现和回归统计 |
 
 `query_operations` 表示可作为通用 discovery 起点的查询。`resource_query_operations` 表示已知资源 ID 或上下文后才适合执行的查询，覆盖统计会计入，但 `hcloud_resource_discovery.py` 不会默认把它们当作 list-only 操作执行。
 `hcloud_resource_query.py` 可执行 `resource_query_operations` 和需要显式目标参数的只读查询；缺少目标参数时会失败，不会替用户猜资源 ID。
 `hcloud_resource_discovery.py` 和 `hcloud_resource_query.py` 会对 operation 名称做宽松匹配，因此问题集里的 `showvpc`、`listcloudservers` 这类写法可以解析到 registry 中的规范 KooCLI operation。
+`query_runner` / `resource_query_runner` 用于非普通 OpenAPI-style 服务；OBS 会路由到 `scripts/hcloud_obs_readonly.py`，避免生成错误的 `hcloud OBS Operation` 命令。
 `change_operations` 中的非 ECS 项当前表示 `hcloud_service_change_plan.py` 可生成 planner-only 风险计划，不表示已经允许自动提交真实变更。
 `supported_cli_regions` / `preferred_cli_region` 用于记录 KooCLI 层面的区域限制；例如 CDN `ListDomains` 会从不支持的业务 region 自动落到 `cn-north-1` 执行只读 discovery。
 
@@ -66,6 +68,7 @@
 - `DNS`
 - `SCM`
 - `CES`
+- `OBS` 的 `hcloud obs help`、`hcloud obs help ls`、`hcloud obs help lifecycle` 和 `hcloud obs version`
 
 结果：
 
@@ -74,8 +77,11 @@
 - `hcloud_resource_discovery.py` 可以按 registry 为这些服务生成 list-only 查询命令，但真实执行仍依赖本机 hcloud metadata 和账号权限
 - `hcloud_resource_query.py` 可以为 EIP `ShowPublicip`、VPC `ShowVpc/ShowSubnet/ShowSecurityGroup`、ELB `ShowLoadBalancer/ShowListener/ListMembers`、EVS `ShowVolume/ShowSnapshot`、IMS `GlanceShowImage`、KPS `ListKeypairDetail`、NAT `ShowNatGateway/ShowNatGatewayDnatRule`、RDS `ShowConfiguration`、CCE `ShowCluster/ListNodes`、CDN `ShowDomain`、DNS `ShowRecordSet`、SCM `ShowCertificate` 等目标型只读查询生成可执行命令；`data.xlsx` 里的 RDS `ShowConfigurationDetail` 会被覆盖检查映射到 KooCLI 实际操作 `ShowConfiguration`
 - `hcloud_service_readiness.py` 可以按服务批量生成或执行只读 readiness 检查，并汇总资源数量和状态计数
-- 默认 readiness 顺序按问题集频次广度优先排列：ECS、VPC、RDS、IMS、EVS、EIP、ELB、NAT、KPS、IAM，然后补 CCE、CDN、DNS、SCM、CES
+- 默认 readiness 顺序按问题集频次广度优先排列：ECS、VPC、RDS、IMS、EVS、EIP、ELB、NAT、KPS、IAM，然后补 CCE、CDN、DNS、SCM、OBS、CES
 - `hcloud_readonly_smoke.py` 可以批量生成或执行多服务只读 smoke 查询
+- `hcloud_obs_readonly.py` 可以为 OBS `ListBuckets`、`StatBucket`、`GetBucketLifecycle` 和 `GetBucketPolicy` 生成或执行 `hcloud obs` 只读命令
+- `hcloud_obs_change_plan.py` 可以为 OBS bucket/lifecycle/policy 变更生成 planner-only 命令和后置验证计划，不执行 submit
+- `hcloud_resource_detail_probe.py` 可以顺序执行 list-then-detail 抽样；EVS/NAT 当前区域无资源时会返回 skipped，而不是把缺资源当作失败
 - CDN `ListDomains` 已验证需要使用 KooCLI 支持区域；registry 会把 `cn-north-4` 调整到 `cn-north-1`
 - `hcloud_service_change_plan.py` 可以为多服务变更生成风险计划和验证建议，但不会执行 submit
 - `hcloud_resource_verify.py` 可以基于 JSON 查询结果验证 EIP、VPC、ELB、EVS、NAT、RDS、CCE、CDN、DNS、SCM 等资源状态
@@ -112,3 +118,12 @@
 - 涉及创建、绑定、扩容、停用、删除、证书部署、集群变更等动作时，先补专门 planner 和验证器
 
 不要伪装成已经有了和 ECS 一样完整的操作细节。
+
+### 当用户任务在 OBS 范围内
+
+当前走 `hcloud obs`/obsutil 路线：
+
+- bucket list 用 `hcloud_obs_readonly.py --operation ListBuckets`
+- bucket 详情或生命周期查询必须显式传 `--bucket`
+- bucket、lifecycle、policy 写类操作只用 `hcloud_obs_change_plan.py` 生成 planner-only 命令
+- OBS 输出是文本，不能按标准 OpenAPI JSON verifier 处理；最终需要结合 obsutil 输出和后续只读查询确认

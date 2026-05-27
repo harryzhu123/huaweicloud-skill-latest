@@ -29,6 +29,9 @@ def load_module(name: str, path: Path):
 
 
 hcloud_readonly_smoke = load_module("hcloud_readonly_smoke", SCRIPTS / "hcloud_readonly_smoke.py")
+hcloud_obs_change_plan = load_module("hcloud_obs_change_plan", SCRIPTS / "hcloud_obs_change_plan.py")
+hcloud_obs_readonly = load_module("hcloud_obs_readonly", SCRIPTS / "hcloud_obs_readonly.py")
+hcloud_resource_detail_probe = load_module("hcloud_resource_detail_probe", SCRIPTS / "hcloud_resource_detail_probe.py")
 hcloud_resource_query = load_module("hcloud_resource_query", SCRIPTS / "hcloud_resource_query.py")
 hcloud_resource_verify = load_module("hcloud_resource_verify", SCRIPTS / "hcloud_resource_verify.py")
 hcloud_service_readiness = load_module("hcloud_service_readiness", SCRIPTS / "hcloud_service_readiness.py")
@@ -87,6 +90,30 @@ class MultiServiceToolsTest(unittest.TestCase):
         self.assertNotIn("--arg=--cli-region=cn-north-4", command_item["command"])
         self.assertEqual(command_item["region_resolution"]["requested_region"], "cn-north-4")
         self.assertEqual(command_item["region_resolution"]["resolved_region"], "cn-north-1")
+
+    def test_readonly_smoke_routes_obs_to_dedicated_runner(self) -> None:
+        args = SimpleNamespace(
+            service=["OBS"],
+            operation=[],
+            region="cn-north-4",
+            project_id="project-1",
+            profile=None,
+            limit=5,
+            obs_endpoint="obs.cn-north-4.myhuaweicloud.com",
+            obs_config=None,
+            obs_payer=None,
+            execute=False,
+            timeout=1,
+            strict=True,
+        )
+
+        result = hcloud_readonly_smoke.build_smoke_plan(args)
+
+        self.assertTrue(result["success"], result)
+        check = result["checks"][0]
+        self.assertEqual(check["runner"], "scripts/hcloud_obs_readonly.py")
+        self.assertEqual(check["plan"]["operation"], "ListBuckets")
+        self.assertIn("--command-part=obs", check["plan"]["command"])
 
     def test_resource_query_builds_explicit_show_command(self) -> None:
         args = SimpleNamespace(
@@ -151,6 +178,100 @@ class MultiServiceToolsTest(unittest.TestCase):
         self.assertEqual(result["operation_scope"], "resource_query")
         self.assertEqual(result["operation"], "ShowVpc")
         self.assertIn("--arg=--vpc_id=vpc-1", result["command"])
+
+    def test_generic_resource_query_rejects_obs_dedicated_runner(self) -> None:
+        args = SimpleNamespace(
+            service="OBS",
+            operation="GetBucketLifecycle",
+            param=["bucket=bucket-1"],
+            arg=[],
+            region="cn-north-4",
+            project_id=None,
+            profile=None,
+            execute=False,
+            timeout=1,
+            allow_sensitive_read=False,
+        )
+
+        result = hcloud_resource_query.build_plan(args)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["resource_query_runner"], "scripts/hcloud_obs_readonly.py")
+
+    def test_obs_readonly_builds_list_buckets_command(self) -> None:
+        args = SimpleNamespace(
+            operation="listbuckets",
+            bucket=None,
+            endpoint="obs.cn-north-4.myhuaweicloud.com",
+            config=None,
+            payer=None,
+            limit=5,
+            arg=["-s"],
+            execute=False,
+            timeout=1,
+        )
+
+        result = hcloud_obs_readonly.build_plan(args)
+
+        self.assertTrue(result["success"], result)
+        self.assertEqual(result["operation"], "ListBuckets")
+        self.assertEqual(result["requested_operation"], "listbuckets")
+        self.assertIn("--command-part=ls", result["command"])
+        self.assertIn("--command-part=-limit=5", result["command"])
+        self.assertIn("--command-part=-e=obs.cn-north-4.myhuaweicloud.com", result["command"])
+
+    def test_obs_readonly_requires_bucket_for_lifecycle(self) -> None:
+        args = SimpleNamespace(
+            operation="GetBucketLifecycle",
+            bucket=None,
+            endpoint=None,
+            config=None,
+            payer=None,
+            limit=None,
+            arg=[],
+            execute=False,
+            timeout=1,
+        )
+
+        result = hcloud_obs_readonly.build_plan(args)
+
+        self.assertFalse(result["success"])
+        self.assertIn("requires --bucket", result["error"])
+
+    def test_obs_readonly_summarizes_obsutil_auth_errors(self) -> None:
+        execution = {
+            "stdout": "List buckets failed, status [403], error code [InvalidAccessKeyId], error message [The Access Key Id you provided does not exist.]",
+            "parsed_json_error": None,
+        }
+
+        summary = hcloud_obs_readonly.summarize_execution("ListBuckets", execution)
+
+        self.assertEqual(summary["obs_status"], 403)
+        self.assertEqual(summary["obs_error_code"], "InvalidAccessKeyId")
+        self.assertIn("obsutil credentials", summary["advice"])
+
+    def test_obs_change_plan_builds_lifecycle_put(self) -> None:
+        args = SimpleNamespace(
+            operation="putbucketlifecycle",
+            bucket="bucket-1",
+            local_file="lifecycle.json",
+            json_input_file=None,
+            endpoint=None,
+            config=None,
+            payer=None,
+            arg=[],
+            timeout=1,
+        )
+
+        result = hcloud_obs_change_plan.build_plan(args)
+
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["planning_only"])
+        self.assertEqual(result["operation"], "PutBucketLifecycle")
+        self.assertEqual(result["risk"]["level"], "medium")
+        self.assertIn("--command-part=lifecycle", result["commands"]["submit"])
+        self.assertIn("--command-part=-method=put", result["commands"]["submit"])
+        self.assertIn("--command-part=-localfile=lifecycle.json", result["commands"]["submit"])
 
     def test_resource_query_rejects_missing_required_param(self) -> None:
         args = SimpleNamespace(
@@ -267,6 +388,34 @@ class MultiServiceToolsTest(unittest.TestCase):
         self.assertTrue(result["success"], result)
         services = [item["service"] for item in result["services"]]
         self.assertEqual(services[:10], ["ECS", "VPC", "RDS", "IMS", "EVS", "EIP", "ELB", "NAT", "KPS", "IAM"])
+        self.assertIn("OBS", services)
+
+    def test_service_readiness_routes_obs_profile(self) -> None:
+        args = SimpleNamespace(
+            service=["OBS"],
+            target=[],
+            region="cn-north-4",
+            project_id="project-1",
+            profile=None,
+            limit=20,
+            obs_endpoint=None,
+            obs_config=None,
+            obs_payer=None,
+            execute=False,
+            timeout=1,
+            strict=True,
+            require_all=False,
+        )
+
+        result = hcloud_service_readiness.build_readiness(args)
+
+        self.assertTrue(result["success"], result)
+        checks = result["services"][0]["checks"]
+        list_check = next(item for item in checks if item["operation"] == "ListBuckets")
+        self.assertEqual(list_check["runner"], "scripts/hcloud_obs_readonly.py")
+        skipped = next(item for item in checks if item["operation"] == "GetBucketLifecycle")
+        self.assertTrue(skipped["skipped"])
+        self.assertEqual(skipped["missing_targets"], ["bucket"])
 
     def test_service_readiness_skips_target_dependent_checks(self) -> None:
         args = SimpleNamespace(
@@ -550,6 +699,44 @@ class MultiServiceToolsTest(unittest.TestCase):
         self.assertEqual(result["resource_verifier"], "scripts/hcloud_resource_verify.py")
         self.assertTrue(result["service_verification_hints"])
         self.assertIn("--arg=--dryrun", result["commands"]["dryrun_or_plan"])
+
+    def test_service_change_plan_delegates_obs_to_specific_planner(self) -> None:
+        args = SimpleNamespace(
+            service="OBS",
+            operation="putbucketlifecycle",
+            region="cn-north-4",
+            project_id=None,
+            profile=None,
+            json_input_file=None,
+            arg=[],
+            no_dryrun=False,
+            allow_unregistered=False,
+        )
+
+        result = hcloud_service_change_plan.build_service_plan(args)
+
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["planning_only"])
+        self.assertEqual(result["operation"], "PutBucketLifecycle")
+        self.assertEqual(result["delegated_planner"], "scripts/hcloud_obs_change_plan.py")
+
+    def test_resource_detail_probe_builds_evs_nat_plan(self) -> None:
+        args = SimpleNamespace(
+            service=["EVS", "NAT"],
+            region="cn-north-4",
+            project_id="project-1",
+            profile=None,
+            limit=5,
+            execute=False,
+            timeout=1,
+        )
+
+        result = hcloud_resource_detail_probe.build_probe(args)
+
+        self.assertTrue(result["success"], result)
+        self.assertEqual([item["service"] for item in result["checks"]], ["EVS", "NAT"])
+        self.assertEqual(result["checks"][0]["detail_operation"], "ShowVolume")
+        self.assertEqual(result["checks"][1]["detail_operation"], "ShowNatGateway")
 
     def test_service_change_plan_uses_supported_cdn_cli_region(self) -> None:
         args = SimpleNamespace(

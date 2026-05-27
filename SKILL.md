@@ -297,6 +297,7 @@ python3 scripts/hcloud_resource_discovery.py \
 - 按 `references/service-registry.json` 生成 list-only 查询命令
 - 对 ECS / IAM / VPC / IMS / KPS / EIP / ELB / EVS / NAT / RDS 等服务做创建前依赖发现
 - `resource_query_operations` 是已知资源 ID 后的查询线索，不会被通用 discovery 默认执行
+- 带专用 runner 的服务不走通用 discovery；例如 OBS 使用 `hcloud_obs_readonly.py`
 - operation 名称会做宽松匹配，兼容 `listcloudservers`、`showvpc` 这类大小写不规范的输入
 - 如果 registry 声明了 `supported_cli_regions`，脚本会把不支持的 `--region` 调整到 `preferred_cli_region`，例如 CDN discovery 使用 `cn-north-1`
 - 默认只生成计划；只有显式 `--execute` 才执行查询
@@ -321,6 +322,22 @@ python3 scripts/hcloud_resource_query.py \
 - 默认只生成计划；只有显式 `--execute` 才运行
 - 对 `ShowServerPassword`、证书私钥等敏感读操作默认拦截，必须显式 `--allow-sensitive-read`
 
+### 9.5. OBS 只读查询
+
+```bash
+python3 scripts/hcloud_obs_readonly.py \
+  --operation ListBuckets \
+  --limit=20 \
+  --pretty
+```
+
+用途：
+
+- 通过 KooCLI 集成的 `hcloud obs`/obsutil 查询 OBS，不走普通 `hcloud OBS Operation` 路径
+- 支持 `ListBuckets`、`StatBucket`、`GetBucketLifecycle`、`GetBucketPolicy`
+- bucket 级操作必须显式传 `--bucket`，例如 `--bucket obs://example-bucket`
+- OBS 输出是 obsutil 文本，不是标准 OpenAPI JSON；最终回复只摘要资源数量和状态，不展开敏感配置
+
 ### 10. 服务 readiness 检查
 
 ```bash
@@ -334,7 +351,7 @@ python3 scripts/hcloud_service_readiness.py \
 
 用途：
 
-- 按服务跑一组只读 readiness 检查，覆盖 ECS / VPC / RDS / IMS / EVS / EIP / ELB / NAT / KPS / IAM / CCE / CDN / DNS / SCM / CES
+- 按服务跑一组只读 readiness 检查，覆盖 ECS / VPC / RDS / IMS / EVS / EIP / ELB / NAT / KPS / IAM / CCE / CDN / DNS / SCM / OBS / CES
 - 默认服务顺序按外部问题集频次广度优先排列，优先覆盖 ECS / VPC / RDS / IMS / EVS / EIP / ELB / NAT / KPS / IAM
 - 无目标参数时执行 list-only 检查；需要目标 ID 的检查会标记 skipped
 - 可用 `--target pool_id=<pool-id>`、`--target cluster_id=<cluster-id>` 等补充目标参数
@@ -393,6 +410,18 @@ python3 scripts/hcloud_service_change_plan.py \
 - 附加服务上下文、known limits 和后置验证建议
 - 对 registry 声明的 `supported_cli_regions` 同样生效，避免为 CDN 这类服务生成已知不可用的区域命令
 - 不执行真实变更；submit 命令必须单独获得用户确认后才可运行
+
+OBS 变更使用专用 planner：
+
+```bash
+python3 scripts/hcloud_obs_change_plan.py \
+  --operation PutBucketLifecycle \
+  --bucket=<bucket-name> \
+  --local-file=<lifecycle-json-file> \
+  --pretty
+```
+
+它只生成 `hcloud obs` submit 命令、风险提示和只读验证计划，不执行真实 bucket/lifecycle/policy 变更。
 
 ### 14. 多服务资源验收
 
@@ -458,8 +487,10 @@ python3 scripts/check_question_coverage.py --pretty
 - VPC / IMS / KPS / ELB / EVS / NAT / DNS / SCM 等服务的第一层资源级只读查询登记
 - ELB / EVS / NAT / RDS / CCE / CDN / DNS / SCM / CES 的低覆盖查询登记，用于离线数据集回归和前置发现
 - 多服务只读 smoke、planner-only 变更计划和 JSON 结果验收脚本
+- OBS `hcloud obs`/obsutil 只读适配器和 planner-only bucket/lifecycle/policy 变更计划
+- `hcloud_resource_detail_probe.py` 可对 EVS/NAT 等服务做 list-then-detail 抽样，有资源时执行 detail，无资源时结构化 skipped
 
-当前首版对 ECS 的 guidance 最完整。对 IAM、VPC、IMS、KPS、EIP 主要提供工作流、发现方法和部分目标查询；对 ELB、EVS、NAT、RDS、CCE、CDN、DNS、SCM、CES 提供低覆盖查询登记、第一层目标查询和 planner-only 计划，不承诺已经沉淀了全量稳定 operation 清单。
+当前首版对 ECS 的 guidance 最完整。对 IAM、VPC、IMS、KPS、EIP 主要提供工作流、发现方法和部分目标查询；对 ELB、EVS、NAT、RDS、CCE、CDN、DNS、SCM、OBS、CES 提供低覆盖查询登记、第一层目标查询和 planner-only 计划，不承诺已经沉淀了全量稳定 operation 清单。
 
 当前首版已经补了本地 meta cache 发现脚本和创建类示例模板；非 ECS 服务的 operation detail 缓存可能不完整，脚本会在缺少参数元数据时保守省略可选参数。
 

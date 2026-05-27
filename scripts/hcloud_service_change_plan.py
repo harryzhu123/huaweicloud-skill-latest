@@ -99,6 +99,17 @@ def registry_change_operations(registry: dict[str, Any], service: str) -> set[st
     return {str(item) for item in entry.get("change_operations", [])}
 
 
+def resolve_change_operation(registered_changes: set[str], requested_operation: str) -> str | None:
+    """Resolve a requested change operation against registered operation names."""
+    if requested_operation in registered_changes:
+        return requested_operation
+    normalized_requested = hcloud_resource_discovery.normalize_operation(requested_operation)
+    for operation in registered_changes:
+        if hcloud_resource_discovery.normalize_operation(operation) == normalized_requested:
+            return operation
+    return None
+
+
 def service_entry(registry: dict[str, Any], service: str) -> dict[str, Any]:
     """Return a registry service entry or an empty dictionary."""
     return registry.get("services", {}).get(service.upper(), {})
@@ -122,6 +133,7 @@ def build_service_plan(args: argparse.Namespace) -> dict[str, Any]:
     """Build a non-executing service-aware change plan."""
     registry = load_registry()
     service = args.service.upper()
+    requested_operation = args.operation
     entry = service_entry(registry, service)
     if not entry:
         return {
@@ -133,13 +145,33 @@ def build_service_plan(args: argparse.Namespace) -> dict[str, Any]:
         }
 
     registered_changes = registry_change_operations(registry, service)
-    registered = args.operation in registered_changes
+    resolved_operation = resolve_change_operation(registered_changes, requested_operation)
+    operation = resolved_operation or requested_operation
+    registered = operation in registered_changes
     preferred_discovery = PREFERRED_DISCOVERY_OPERATIONS.get(service)
+    custom_planner = entry.get("planner")
+    if custom_planner and custom_planner != "scripts/hcloud_service_change_plan.py":
+        return {
+            "success": True,
+            "service": service,
+            "operation": operation,
+            "requested_operation": requested_operation,
+            "planning_only": True,
+            "delegated_planner": custom_planner,
+            "registered_change_operation": registered,
+            "coverage": entry.get("coverage"),
+            "service_known_limits": entry.get("known_limits", []),
+            "next_steps": [
+                f"Use {custom_planner} for this service-specific change plan.",
+                "Do not run submit commands without a separate explicit user confirmation.",
+            ],
+        }
     if registered_changes and not registered and not args.allow_unregistered:
         return {
             "success": False,
             "service": service,
-            "operation": args.operation,
+            "operation": operation,
+            "requested_operation": requested_operation,
             "error": "Operation is not registered as a planned change for this service.",
             "available_change_operations": sorted(registered_changes),
             "next_actions": [
@@ -149,7 +181,9 @@ def build_service_plan(args: argparse.Namespace) -> dict[str, Any]:
         }
 
     cli_region, region_resolution = hcloud_resource_discovery.resolve_cli_region(args, entry)
-    plan = hcloud_change_plan.build_plan(planner_args(args, cli_region))
+    plan_args = planner_args(args, cli_region)
+    plan_args.operation = operation
+    plan = hcloud_change_plan.build_plan(plan_args)
     plan.update(
         {
             "success": True,
@@ -160,6 +194,8 @@ def build_service_plan(args: argparse.Namespace) -> dict[str, Any]:
             "service_context_hints": SERVICE_CONTEXT_HINTS.get(service, []),
             "service_verification_hints": SERVICE_VERIFICATION_HINTS.get(service, []),
             "resource_verifier": "scripts/hcloud_resource_verify.py",
+            "submit_requires_confirmation": True,
+            "submit_is_not_executed_by_this_planner": True,
             "read_only_smoke_plan": hcloud_resource_discovery.build_plan(
                 SimpleNamespace(
                     service=service,
@@ -175,6 +211,8 @@ def build_service_plan(args: argparse.Namespace) -> dict[str, Any]:
     )
     if region_resolution:
         plan["region_resolution"] = region_resolution
+    if requested_operation != operation:
+        plan["requested_operation"] = requested_operation
     plan["next_steps"] = [
         *plan.get("next_steps", []),
         "Use hcloud_resource_verify.py against post-change JSON results before declaring the resource ready.",

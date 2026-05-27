@@ -31,12 +31,15 @@ class SafeExecRedactionTest(unittest.TestCase):
                 "--secret-key=secret-one",
                 "--access-key",
                 "secret-two",
+                "-k=secret-three",
+                "-t",
+                "secret-four",
                 "--name",
                 "plain",
             ]
         )
 
-        self.assertEqual(secrets, {"secret-one", "secret-two"})
+        self.assertEqual(secrets, {"secret-one", "secret-two", "secret-three", "secret-four"})
 
     def test_redact_command_handles_two_token_secret_forms(self) -> None:
         command = ["hcloud", "configure", "set", "--secret-key", "secret-two", "--name", "plain"]

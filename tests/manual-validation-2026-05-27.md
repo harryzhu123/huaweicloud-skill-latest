@@ -298,6 +298,47 @@ python3 scripts/hcloud_service_readiness.py \
 
 - 本验证只执行只读查询，不创建、修改、绑定、解绑或删除资源。
 - 摘要脚本只输出成功状态和资源数量，不展开资源 ID、公钥、project ID 等明细。
+
+## 验证 9：OBS 与 EVS/NAT detail probe
+
+### Command shape
+
+```bash
+python3 scripts/hcloud_obs_readonly.py \
+  --operation ListBuckets \
+  --limit=20 \
+  --execute \
+  --pretty
+```
+
+```bash
+python3 scripts/hcloud_obs_change_plan.py \
+  --operation PutBucketLifecycle \
+  --bucket=<bucket-name> \
+  --local-file=<lifecycle-json-file> \
+  --pretty
+```
+
+```bash
+python3 scripts/hcloud_resource_detail_probe.py \
+  --service EVS \
+  --service NAT \
+  --region=cn-north-4 \
+  --execute \
+  --pretty
+```
+
+### Result
+
+- OBS `ListBuckets` 命令形态正确，实际执行到 `hcloud obs ls -limit=20`，但当前 obsutil 配置返回 `403 InvalidAccessKeyId`。
+- `hcloud_obs_readonly.py` 已把该失败归类到 summary：`obs_status=403`、`obs_error_code=InvalidAccessKeyId`，并提示检查 `hcloud obs config`、OBS endpoint 和 obsutil AK/SK/token。
+- OBS `PutBucketLifecycle` 只生成 planner-only submit 命令和 `GetBucketLifecycle` 后置验证计划，没有执行真实变更。
+- EVS/NAT detail probe 成功执行 list 阶段；当前 `cn-north-4` 下 EVS volume 和 NAT gateway 都为 0，因此 detail 阶段按设计 skipped。
+
+### Notes
+
+- OBS 不走普通 `hcloud OBS <Operation>`；必须走 `hcloud obs`/obsutil 专用 adapter。
+- EVS/NAT detail 能力已工具化，后续账号/区域出现资源时会自动执行 detail 查询。
   - CCE `ShowCluster/ListNodes` 和 CDN `ShowDomain` 因缺少目标 ID 被正确跳过。
 
 ### Follow-up Fix

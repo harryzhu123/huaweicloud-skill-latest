@@ -360,6 +360,8 @@ class ArchitectureContractsTest(unittest.TestCase):
                     ["Check IMS.", "1. 调用镜像查询工具（GlanceShowImage）确认镜像存在"],
                     ["Check KPS.", "1. 调用密钥对查询工具（ListKeypairDetail）确认密钥对存在"],
                     ["Check NAT.", "1. 调用 NAT 查询工具（ShowNatGatewayDnatRule）确认 DNAT 规则存在"],
+                    ["Check OBS buckets.", "1. 调用 OBS 查询工具（ListBuckets）确认桶列表可用"],
+                    ["Check OBS lifecycle.", "1. 调用 OBS 查询工具（GetBucketLifecycle）确认生命周期配置"],
                 ],
             )
 
@@ -397,6 +399,14 @@ class ArchitectureContractsTest(unittest.TestCase):
         )
         self.assertEqual(
             result["executable_validation_paths"]["NAT:resource_query:scripts/hcloud_resource_query.py"],
+            1,
+        )
+        self.assertEqual(
+            result["executable_validation_paths"]["OBS:query:scripts/hcloud_obs_readonly.py"],
+            1,
+        )
+        self.assertEqual(
+            result["executable_validation_paths"]["OBS:resource_query:scripts/hcloud_obs_readonly.py"],
             1,
         )
         self.assertEqual(

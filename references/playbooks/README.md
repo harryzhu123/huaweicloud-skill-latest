@@ -21,7 +21,7 @@
 - `docker-remote-api-readiness.md`
   - 安装 Docker、开放 Remote API 并用协议探测验证 daemon。
 - `obs-boundary.md`
-  - 记录 OBS 当前未走 hcloud 的边界，避免生成不可验证命令。
+  - 记录 OBS 的 `hcloud obs`/obsutil 专用路线，避免生成不可验证的 `hcloud OBS Operation` 命令。
 - `resource-idempotency-reconcile.md`
   - 按资源名做幂等选择和修复，避免重复创建同名资源。
 - `iam-context-bootstrap.md`
@@ -47,4 +47,4 @@
 - 目标是 RDS 实例可用性：先看 `rds-instance-readiness.md`
 - 卡在上下文或认证：先看 `iam-context-bootstrap.md`
 - 卡在镜像、密钥对或网络依赖：按 `ims`、`kps`、`vpc` 对应 playbook 进入
-- 目标涉及 OBS：先看 `obs-boundary.md`，确认工具路线后再执行
+- 目标涉及 OBS：先看 `obs-boundary.md`，只读查询走 `hcloud_obs_readonly.py`，写类操作先走 `hcloud_obs_change_plan.py`

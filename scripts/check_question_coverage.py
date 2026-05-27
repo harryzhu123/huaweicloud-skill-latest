@@ -129,17 +129,19 @@ def load_registry_execution_paths(path: Path = REGISTRY_PATH) -> dict[str, dict[
     for service, entry in registry.get("services", {}).items():
         service_key = service.upper()
         service_paths: dict[str, dict[str, str]] = {}
+        query_runner = entry.get("query_runner") or "scripts/hcloud_resource_discovery.py"
+        resource_query_runner = entry.get("resource_query_runner") or "scripts/hcloud_resource_query.py"
         for operation in entry.get("query_operations", []):
             service_paths[normalize_operation(operation)] = {
                 "operation": operation,
                 "scope": "query",
-                "runner": "scripts/hcloud_resource_discovery.py",
+                "runner": query_runner,
             }
         for operation in entry.get("resource_query_operations", []):
             service_paths[normalize_operation(operation)] = {
                 "operation": operation,
                 "scope": "resource_query",
-                "runner": "scripts/hcloud_resource_query.py",
+                "runner": resource_query_runner,
             }
         for operation in entry.get("change_operations", []):
             service_paths[normalize_operation(operation)] = {

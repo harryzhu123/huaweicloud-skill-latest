@@ -35,6 +35,7 @@ SECRET_HINTS = (
     "user_data",
     "userdata",
 )
+OBSUTIL_SECRET_ARG_NAMES = {"-i", "-k", "-t", "-token"}
 ERROR_TYPES = ("USE_ERROR", "NETWORK_ERROR", "OPENAPI_ERROR", "APIE_ERROR")
 
 
@@ -73,6 +74,8 @@ def collect_known_secrets() -> set[str]:
 def looks_like_secret_arg(arg: str) -> bool:
     """Return True when an argument key suggests sensitive data."""
     lowered = arg.lower()
+    if lowered.split("=", 1)[0] in OBSUTIL_SECRET_ARG_NAMES:
+        return True
     return any(hint in lowered for hint in SECRET_HINTS)
 
 

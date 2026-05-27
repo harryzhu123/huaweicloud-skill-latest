@@ -136,6 +136,15 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
             "error": f"Service is not registered: {service}",
             "available_services": sorted(registry["services"]),
         }
+    query_runner = service_entry.get("query_runner")
+    if query_runner and query_runner != "scripts/hcloud_resource_discovery.py":
+        return {
+            "success": False,
+            "service": service,
+            "error": "Service uses a dedicated query runner and is not compatible with generic discovery.",
+            "query_runner": query_runner,
+            "available_query_operations": service_entry.get("query_operations", []),
+        }
 
     operations = service_entry.get("query_operations", [])
     if args.operation:
