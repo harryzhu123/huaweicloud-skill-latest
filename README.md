@@ -2,12 +2,23 @@
 
 `huaweicloud-skill` 是一个面向华为云 KooCLI / `hcloud` 的 Agent Skill。它让通用 Agent 能够用更安全、可审计、可复现的方式发现华为云 API、查询资源、诊断配置问题，并在需要时规划受保护的变更流程。
 
+你不需要记住复杂的 `hcloud` 命令，也不需要直接调用仓库里的脚本。用户只用自然语言告诉 Agent 目标，Agent 负责选择 Skill 内部的工具、构造命令、检查风险和整理结果。
+
 它适合这些场景：
 
 - 你希望 Agent 直接基于 `hcloud` 操作华为云，而不是靠记忆猜 API。
 - 你需要先盘点账号、区域、项目和资源，再决定下一步动作。
 - 你希望变更前有 dry-run、风险识别、确认门禁和变更后验证。
 - 你希望把认证、区域、项目、参数、输出格式等 CLI 问题转成 Agent 能理解的结构化错误。
+
+## 它怎么工作
+
+一次典型任务会按这个顺序执行：
+
+1. Agent 先检查本机 KooCLI、profile、region、project 和认证状态。
+2. Agent 根据 Skill 的服务注册表和 playbook 判断该用哪个华为云服务和操作。
+3. 查询类任务直接走只读路径；变更类任务先做计划、dry-run 和风险识别。
+4. 只有用户明确确认后，Agent 才会执行真实变更，并继续做结果验证。
 
 ## 快速开始
 
@@ -34,8 +45,6 @@ hcloud configure list
 - [ClawHub: huaweicloud](https://clawhub.ai/zfish-lu/huaweicloud)
 - [OpenClaw 技能市场：huaweicloud-skill](https://github.com/OpenClawAgent/OpenClaw/blob/main/docs/skill-marketplace.md#available-skills)
 
-安装完成后，不需要直接调用仓库里的脚本。用户只需要用自然语言告诉 Agent 目标，Agent 会按照 Skill 的规则选择合适的内部工具和执行流程。
-
 ### 3. 让 Agent 使用它
 
 可以直接用自然语言说明目标，Agent 会按 Skill 的规则先检查上下文、发现服务和操作、构造命令，再决定是否执行：
@@ -49,21 +58,21 @@ hcloud configure list
 
 下面的样例都是给 Agent 的自然语言提示词，不是需要用户手动执行的终端命令。
 
-#### 安全盘点当前账号资源
+### 安全盘点当前账号资源
 
 ```text
 使用 huaweicloud-skill，先检查当前 hcloud 配置，再盘点 cn-north-4
 的 ECS、VPC、Subnet、EIP 和安全组资源，输出资源摘要和发现的风险点。
 ```
 
-#### 把 hcloud 报错转成可诊断结果
+### 把 hcloud 报错转成可诊断结果
 
 ```text
 使用 huaweicloud-skill 执行一次 ECS 列表查询。如果失败，请解释是认证、
 区域、project_id、权限、参数还是输出格式问题，并给出下一步修复建议。
 ```
 
-#### 创建 ECS 前先检查参数
+### 创建 ECS 前先检查参数
 
 ```text
 我准备创建一台 ECS，配置包括镜像、规格、VPC、子网、安全组、密钥对、
@@ -74,18 +83,25 @@ hcloud configure list
 风险点和推荐修复方式。
 ```
 
-#### 规划一次受保护的网络变更
+### 规划一次受保护的网络变更
 
 ```text
 使用 huaweicloud-skill 规划新增一条安全组规则。先做 dry-run 和风险识别，
 列出需要我确认的参数；在我明确确认前不要提交变更。
 ```
 
-#### 快速确认 OBS 配置
+### 快速确认 OBS 配置
 
 ```text
 使用 huaweicloud-skill 检查 OBS 是否配置正确。如果 list bucket 失败，
 请说明是 AK/SK、endpoint、权限还是账号侧问题。
+```
+
+### 变更后验证资源状态
+
+```text
+使用 huaweicloud-skill 检查刚才的 EIP 绑定是否真正生效。请查询目标 ECS
+和 EIP 的当前状态，说明公网 IP、绑定关系和仍需处理的问题。
 ```
 
 ## 能力亮点
@@ -97,9 +113,9 @@ hcloud configure list
 - **变更门禁**：变更类流程默认包含 dry-run、风险识别、显式确认、执行记录和变更后验证。
 - **开发者友好**：架构、扩展方式、服务覆盖策略和脚本契约都沉淀在 `docs/` 中，便于继续贡献。
 
-## 用户协助配置项
+## 你需要告诉 Agent 什么
 
-为了让 Agent 能可靠完成云资源查询或变更，建议先准备好这些信息：
+为了让 Agent 能可靠完成云资源查询或变更，建议尽量提供这些信息。缺失的信息 Agent 会继续追问：
 
 - `hcloud` 已安装，并且在当前终端可执行。
 - 至少配置一个可用 profile，包含 AK/SK 或其他认证方式。
@@ -108,6 +124,8 @@ hcloud configure list
 - 对账号级或全局服务确认是否需要特殊 endpoint 或 global project。
 - OBS 查询需要额外确认 OBS 认证和 endpoint 是否可用。
 - 变更类请求需要提供目标资源 id、期望状态和可接受的回滚方式。
+
+你可以用自然语言给出这些信息，也可以在对话里粘贴配置片段、资源 ID、错误日志或创建参数 JSON。
 
 如果配置有问题，Skill 会尽量把失败原因结构化，例如：
 
