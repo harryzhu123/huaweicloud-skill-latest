@@ -424,6 +424,7 @@ python3 scripts/hcloud_eip_change_flow.py \
 python3 scripts/hcloud_guarded_change_flow.py \
   --service VPC \
   --operation CreateSecurityGroupRule \
+  --verify-param security_group_rule_id=<rule-id> \
   --region=cn-north-4 \
   --project-id=<project-id> \
   --pretty
@@ -443,10 +444,15 @@ python3 scripts/hcloud_guarded_change_flow.py \
 
 - 修复 registry 路由：`hcloud_eip_change_flow.py` 只挂在 EIP；VPC / ELB / EVS / NAT / RDS / CDN / DNS / SCM 使用 `hcloud_guarded_change_flow.py`。
 - 通用 guarded flow 默认只生成 service plan、dry-run/submit 命令和后置只读 smoke plan，不执行真实 submit。
+- 通用 guarded flow 现在会优先生成资源级 Show* 后置验证计划，例如 VPC `CreateSecurityGroupRule` -> `ShowSecurityGroupRule`、ELB `CreateListener` -> `ShowListener`、EVS `CreateVolume` -> `ShowVolume`、NAT `CreateNatGatewayDnatRule` -> `ShowNatGatewayDnatRule`。
+- 没有真实 submit 返回的资源 ID 时，需要通过 `--verify-param KEY=VALUE` 显式传入目标 ID；脚本会报告缺少哪些参数，而不是猜测资源。
+- 未登记资源级验证 profile 的变更会返回明确提示，可用 `--verify-operation` 加 `--verify-param` 手工指定 Show* 查询。
 - 未带 `--confirm-submit` 时，即使传入 `--execute-submit`，脚本也返回 `submit_guard_failure`，没有执行真实变更。
 - 离线验证集现在把 change operation 的执行路径记为 `guarded_change` 或专用 `planner_only_change`，不再只看 planner 是否存在。
+- Plan-mode 矩阵已覆盖 VPC / ELB / EVS / NAT / RDS / CDN / DNS / SCM，分别生成 `ShowSecurityGroupRule`、`ShowListener`、`ShowVolume`、`ShowNatGatewayDnatRule`、`ShowInstanceConfiguration`、`ShowDomain`、`ShowRecordSet`、`ShowCertificate` 后置验证计划。
+- 自动化回归通过：94 个单测、registry JSON、materials drift、generated_questions/data.xlsx 覆盖检查和 `git diff --check`。
 
 ### Notes
 
 - 本验证没有创建、修改、绑定、解绑或删除任何云资源。
-- 该 flow 是 P0 横向风险门禁，不代表每个服务都已经拥有完整业务语义 verifier；服务专用 verifier 仍需逐步补齐。
+- 该 flow 是 P0 横向风险门禁；资源级 Show* 验证可以确认目标资源是否存在及基础状态，复杂业务语义仍需要服务专用 verifier 逐步补齐。

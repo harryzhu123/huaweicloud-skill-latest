@@ -11,7 +11,50 @@ from types import SimpleNamespace
 from typing import Any
 
 import hcloud_resource_discovery
+import hcloud_resource_query
 import hcloud_service_change_plan
+
+
+VERIFY_PROFILES = {
+    "VPC": [
+        ("SecurityGroupRule", "ShowSecurityGroupRule", {"security_group_rule_id": ("security_group_rule.id", "security_group_rule_id", "rule_id", "id")}),
+        ("SecurityGroup", "ShowSecurityGroup", {"security_group_id": ("security_group.id", "security_group_id", "id")}),
+        ("Subnet", "ShowSubnet", {"subnet_id": ("subnet.id", "subnet_id", "id")}),
+        ("Vpc", "ShowVpc", {"vpc_id": ("vpc.id", "vpc_id", "id")}),
+    ],
+    "ELB": [
+        ("Certificate", "ShowCertificate", {"certificate_id": ("certificate.id", "certificate_id", "id")}),
+        ("HealthMonitor", "ShowHealthMonitor", {"healthmonitor_id": ("healthmonitor.id", "healthmonitor_id", "id")}),
+        ("LoadBalancer", "ShowLoadBalancer", {"loadbalancer_id": ("loadbalancer.id", "loadbalancer_id", "id")}),
+        ("Listener", "ShowListener", {"listener_id": ("listener.id", "listener_id", "id")}),
+        ("Member", "ShowMember", {"pool_id": ("pool.id", "pool_id"), "member_id": ("member.id", "member_id", "id")}),
+        ("Pool", "ShowPool", {"pool_id": ("pool.id", "pool_id", "id")}),
+    ],
+    "EVS": [
+        ("Snapshot", "ShowSnapshot", {"snapshot_id": ("snapshot.id", "snapshot_id", "id")}),
+        ("Volume", "ShowVolume", {"volume_id": ("volume.id", "volume_id", "id")}),
+    ],
+    "NAT": [
+        ("DnatRule", "ShowNatGatewayDnatRule", {"dnat_rule_id": ("dnat_rule.id", "dnat_rule_id", "id")}),
+        ("SnatRule", "ShowNatGatewaySnatRule", {"snat_rule_id": ("snat_rule.id", "snat_rule_id", "id")}),
+        ("NatGateway", "ShowNatGateway", {"nat_gateway_id": ("nat_gateway.id", "nat_gateway_id", "id")}),
+    ],
+    "RDS": [
+        ("Configuration", "ShowConfiguration", {"config_id": ("configuration.id", "config_id", "id")}),
+        ("BackupPolicy", "ShowBackupPolicy", {"instance_id": ("instance.id", "instance_id", "id")}),
+        ("InstanceName", "ShowInstanceConfiguration", {"instance_id": ("instance.id", "instance_id", "id")}),
+        ("Instance", "ShowInstanceConfiguration", {"instance_id": ("instance.id", "instance_id", "id")}),
+    ],
+    "CDN": [
+        ("Domain", "ShowDomain", {"domain_id": ("domain.id", "domain_id", "id")}),
+    ],
+    "DNS": [
+        ("RecordSet", "ShowRecordSet", {"zone_id": ("zone.id", "zone_id"), "recordset_id": ("recordset.id", "recordset_id", "id")}),
+    ],
+    "SCM": [
+        ("Certificate", "ShowCertificate", {"certificate_id": ("certificate.id", "certificate_id", "id")}),
+    ],
+}
 
 
 def execute_command(command: list[str], timeout: int) -> dict[str, Any]:
@@ -34,6 +77,26 @@ def execute_command(command: list[str], timeout: int) -> dict[str, Any]:
             "parsed_json": None,
             "parsed_json_error": "hcloud_safe_exec.py did not return valid JSON.",
         }
+
+
+def normalize_param_name(value: str) -> str:
+    """Normalize a parameter or JSON key name for matching."""
+    return value.strip().lstrip("-").replace("-", "_").lower()
+
+
+def parse_key_value(values: list[str], label: str) -> dict[str, str]:
+    """Parse repeated KEY=VALUE arguments."""
+    parsed: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"Invalid {label}, expected KEY=VALUE: {value}")
+        key, raw = value.split("=", 1)
+        key = normalize_param_name(key)
+        raw = raw.strip()
+        if not key or not raw:
+            raise ValueError(f"Invalid {label}, expected non-empty KEY=VALUE: {value}")
+        parsed[key] = raw
+    return parsed
 
 
 def service_plan_args(args: argparse.Namespace) -> SimpleNamespace:
@@ -71,6 +134,189 @@ def submit_guard_failure(args: argparse.Namespace, service_plan: dict[str, Any])
     return None
 
 
+def operation_resource_name(operation: str) -> str:
+    """Return the resource portion of a change operation name."""
+    prefixes = (
+        "BatchCreate",
+        "BatchDelete",
+        "BatchUpdate",
+        "Disassociate",
+        "Associate",
+        "Create",
+        "Update",
+        "Delete",
+        "Resize",
+        "Retype",
+        "Attach",
+        "Detach",
+        "Bind",
+        "Unbind",
+        "Apply",
+    )
+    for prefix in prefixes:
+        if operation.startswith(prefix):
+            return operation[len(prefix):]
+    return operation
+
+
+def profile_token_matches(token: str, resource_name: str) -> bool:
+    """Return whether a verify profile token matches the changed resource."""
+    token_value = token.lower()
+    resource_value = resource_name.lower()
+    plural_token = f"{token_value}s"
+    return (
+        resource_value == token_value
+        or resource_value == plural_token
+        or resource_value.endswith(token_value)
+        or resource_value.endswith(plural_token)
+    )
+
+
+def infer_verify_profile(service: str, operation: str) -> dict[str, Any] | None:
+    """Infer a service-specific read verification operation for a change operation."""
+    resource_name = operation_resource_name(operation)
+    for token, verify_operation, params in VERIFY_PROFILES.get(service, []):
+        if profile_token_matches(token, resource_name):
+            return {
+                "verify_operation": verify_operation,
+                "params": params,
+                "matched_token": token,
+                "matched_resource": resource_name,
+            }
+    return None
+
+
+def get_path(value: Any, dotted_path: str) -> str | None:
+    """Return a string value from a nested dictionary path when present."""
+    current = value
+    for part in dotted_path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    if isinstance(current, str) and current:
+        return current
+    if isinstance(current, (int, float)):
+        return str(current)
+    return None
+
+
+def find_key_value(value: Any, candidate_key: str) -> str | None:
+    """Return the first string value for a matching key in a JSON-like object."""
+    normalized_candidate = normalize_param_name(candidate_key)
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if normalize_param_name(str(key)) == normalized_candidate:
+                if isinstance(child, str) and child:
+                    return child
+                if isinstance(child, (int, float)):
+                    return str(child)
+            found = find_key_value(child, candidate_key)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = find_key_value(child, candidate_key)
+            if found:
+                return found
+    return None
+
+
+def find_candidate_value(value: Any, candidates: tuple[str, ...]) -> str | None:
+    """Find a candidate identifier in a JSON-like submit result."""
+    for candidate in candidates:
+        if "." in candidate:
+            found = get_path(value, candidate)
+            if found:
+                return found
+    for candidate in candidates:
+        found = find_key_value(value, candidate)
+        if found:
+            return found
+    return None
+
+
+def extracted_verify_params(profile: dict[str, Any], submit_result: dict[str, Any] | None) -> dict[str, str]:
+    """Extract verification parameters from a submit result using a verify profile."""
+    if not submit_result:
+        return {}
+    parsed_json = submit_result.get("parsed_json")
+    if parsed_json is None:
+        return {}
+    extracted = {}
+    for param_name, candidates in profile.get("params", {}).items():
+        value = find_candidate_value(parsed_json, candidates)
+        if value:
+            extracted[param_name] = value
+    return extracted
+
+
+def build_verify_plan(
+    args: argparse.Namespace,
+    service_plan: dict[str, Any],
+    submit_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build a service-specific post-change verification plan."""
+    service = args.service.upper()
+    requested_operation = service_plan.get("operation") or args.operation
+    explicit_params = parse_key_value(args.verify_param, "--verify-param")
+    inferred = infer_verify_profile(service, str(requested_operation))
+
+    if args.verify_operation:
+        profile = {
+            "verify_operation": args.verify_operation,
+            "params": {key: (key,) for key in explicit_params},
+            "matched_token": "explicit",
+        }
+    elif inferred:
+        profile = inferred
+    else:
+        return {
+            "success": False,
+            "service": service,
+            "operation": requested_operation,
+            "error": "No service-specific verification profile is registered for this change operation.",
+            "next_actions": [
+                "Pass --verify-operation and --verify-param KEY=VALUE to build an explicit post-change verification query.",
+                "Use the post_change_readiness_plan as a coarse service-level fallback.",
+            ],
+        }
+
+    params = {
+        **extracted_verify_params(profile, submit_result),
+        **explicit_params,
+    }
+    verify_args = SimpleNamespace(
+        service=service,
+        operation=profile["verify_operation"],
+        param=[f"{key}={value}" for key, value in sorted(params.items())],
+        arg=[],
+        region=args.region,
+        project_id=args.project_id,
+        profile=args.profile,
+        execute=args.execute_verify,
+        timeout=args.timeout,
+        allow_sensitive_read=False,
+    )
+    plan = hcloud_resource_query.build_plan(verify_args)
+    plan["verification_profile"] = {
+        "change_operation": requested_operation,
+        "matched_token": profile.get("matched_token"),
+        "matched_resource": profile.get("matched_resource"),
+        "inferred_operation": profile["verify_operation"],
+        "param_sources": {
+            "explicit": sorted(explicit_params),
+            "submit_result": sorted(set(params) - set(explicit_params)),
+        },
+        "delete_operation": str(requested_operation).lower().startswith("delete"),
+    }
+    if plan["verification_profile"]["delete_operation"]:
+        plan["verification_profile"]["verification_intent"] = "expect_absent_or_deleted_state"
+        plan.setdefault("next_actions", []).append(
+            "For delete operations, a not_found response can be the expected verification outcome."
+        )
+    return plan
+
+
 def build_flow(args: argparse.Namespace) -> dict[str, Any]:
     """Build and optionally execute a guarded change flow."""
     service = args.service.upper()
@@ -79,7 +325,7 @@ def build_flow(args: argparse.Namespace) -> dict[str, Any]:
         "success": bool(service_plan.get("success")),
         "service": service,
         "operation": args.operation,
-        "mode": "execute" if (args.execute_dryrun or args.execute_submit or args.execute_readiness) else "plan",
+        "mode": "execute" if (args.execute_dryrun or args.execute_submit or args.execute_readiness or args.execute_verify) else "plan",
         "planning_only": True,
         "service_plan": service_plan,
         "submit_guard": {
@@ -91,6 +337,7 @@ def build_flow(args: argparse.Namespace) -> dict[str, Any]:
             "Review the service_plan risk, dry-run command, target project, and rollback expectations.",
             "Run --execute-dryrun first when the operation supports dry-run.",
             "Only use --execute-submit --confirm-submit after explicit user approval for this exact cloud change.",
+            "Run --execute-verify with --verify-param when a service-specific target ID is known.",
             "Run --execute-readiness after submit to execute the read-only post-change smoke plan.",
         ],
     }
@@ -134,6 +381,18 @@ def build_flow(args: argparse.Namespace) -> dict[str, Any]:
             result["next_steps"].append("Submit failed. Inspect submit.error_details/advice before retrying.")
             return result
 
+    try:
+        verify_plan = build_verify_plan(args, service_plan, submit_result)
+    except ValueError as exc:
+        result["success"] = False
+        result["post_change_verification"] = {"success": False, "error": str(exc)}
+        return result
+    result["post_change_verification"] = verify_plan
+    if args.execute_verify:
+        result["success"] = bool(verify_plan.get("success"))
+        if not result["success"]:
+            return result
+
     readiness_plan = service_plan.get("read_only_smoke_plan")
     if readiness_plan:
         result["post_change_readiness_plan"] = readiness_plan
@@ -167,6 +426,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--confirm-submit", action="store_true", help="Required with --execute-submit.")
     parser.add_argument("--skip-dryrun", action="store_true", help="Allow submit without running dry-run first.")
     parser.add_argument("--execute-readiness", action="store_true", help="Execute the read-only post-change smoke plan.")
+    parser.add_argument("--verify-operation", help="Explicit read operation for post-change resource verification.")
+    parser.add_argument("--verify-param", action="append", default=[], help="Post-change verification parameter as KEY=VALUE. Can be repeated.")
+    parser.add_argument("--execute-verify", action="store_true", help="Execute the post-change resource verification query.")
     parser.add_argument("--timeout", type=int, default=120, help="Timeout for executed safe_exec commands.")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output.")
     args = parser.parse_args()

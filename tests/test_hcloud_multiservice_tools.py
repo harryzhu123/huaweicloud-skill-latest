@@ -82,6 +82,9 @@ class MultiServiceToolsTest(unittest.TestCase):
             "confirm_submit": False,
             "skip_dryrun": False,
             "execute_readiness": False,
+            "verify_operation": None,
+            "verify_param": ["security_group_rule_id=rule-1"],
+            "execute_verify": False,
             "timeout": 1,
         }
         values.update(overrides)
@@ -255,6 +258,9 @@ class MultiServiceToolsTest(unittest.TestCase):
         self.assertIn("--expect-json", command)
         self.assertIn("--arg=--dryrun", command)
         self.assertIn("post_change_readiness_plan", result)
+        self.assertTrue(result["post_change_verification"]["success"])
+        self.assertEqual(result["post_change_verification"]["operation"], "ShowSecurityGroupRule")
+        self.assertIn("--arg=--security_group_rule_id=rule-1", result["post_change_verification"]["command"])
 
     def test_guarded_change_flow_requires_submit_confirmation(self) -> None:
         result = hcloud_guarded_change_flow.build_flow(
@@ -281,9 +287,91 @@ class MultiServiceToolsTest(unittest.TestCase):
 
         self.assertTrue(result["success"], result)
         self.assertTrue(result["dryrun"]["success"])
+        self.assertTrue(result["post_change_verification"]["success"])
         self.assertTrue(result["post_change_readiness"]["success"])
         dryrun_mock.assert_called_once()
         readiness_mock.assert_called_once()
+
+    def test_guarded_change_flow_extracts_verify_id_from_submit_result(self) -> None:
+        with patch.object(
+            hcloud_guarded_change_flow,
+            "execute_command",
+            side_effect=[
+                {"success": True, "parsed_json": {"dryrun": True}},
+                {"success": True, "parsed_json": {"security_group_rule": {"id": "rule-2"}}},
+            ],
+        ) as execute_mock, patch.object(
+            hcloud_guarded_change_flow.hcloud_resource_query,
+            "execute_command",
+            return_value={"success": True, "parsed_json": {"security_group_rule": {"id": "rule-2"}}},
+        ) as verify_mock:
+            result = hcloud_guarded_change_flow.build_flow(
+                self.guarded_flow_args(
+                    verify_param=[],
+                    execute_dryrun=True,
+                    execute_submit=True,
+                    confirm_submit=True,
+                    execute_verify=True,
+                )
+            )
+
+        self.assertTrue(result["success"], result)
+        self.assertFalse(result["planning_only"])
+        self.assertEqual(result["post_change_verification"]["operation"], "ShowSecurityGroupRule")
+        self.assertIn("--arg=--security_group_rule_id=rule-2", result["post_change_verification"]["command"])
+        self.assertEqual(execute_mock.call_count, 2)
+        verify_mock.assert_called_once()
+
+    def test_guarded_change_flow_reports_missing_verify_target(self) -> None:
+        result = hcloud_guarded_change_flow.build_flow(
+            self.guarded_flow_args(verify_param=[])
+        )
+
+        self.assertTrue(result["success"], result)
+        self.assertFalse(result["post_change_verification"]["success"])
+        self.assertEqual(result["post_change_verification"]["missing_params"], ["security_group_rule_id"])
+
+    def test_guarded_change_flow_does_not_verify_wrong_vpc_resource(self) -> None:
+        result = hcloud_guarded_change_flow.build_flow(
+            self.guarded_flow_args(operation="CreateVpcPeering", arg=[], verify_param=[])
+        )
+
+        self.assertTrue(result["success"], result)
+        self.assertFalse(result["post_change_verification"]["success"])
+        self.assertEqual(
+            result["post_change_verification"]["error"],
+            "No service-specific verification profile is registered for this change operation.",
+        )
+
+    def test_guarded_change_flow_requires_rds_instance_verify_target(self) -> None:
+        result = hcloud_guarded_change_flow.build_flow(
+            self.guarded_flow_args(
+                service="RDS",
+                operation="CreateInstance",
+                arg=[],
+                verify_param=[],
+            )
+        )
+
+        self.assertTrue(result["success"], result)
+        self.assertFalse(result["post_change_verification"]["success"])
+        self.assertEqual(result["post_change_verification"]["operation"], "ShowInstanceConfiguration")
+        self.assertEqual(result["post_change_verification"]["missing_params"], ["instance_id"])
+
+    def test_guarded_change_flow_can_use_explicit_verify_operation(self) -> None:
+        result = hcloud_guarded_change_flow.build_flow(
+            self.guarded_flow_args(
+                service="CDN",
+                operation="CreateDomain",
+                verify_operation="ShowDomain",
+                verify_param=["domain_id=domain-1"],
+            )
+        )
+
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["post_change_verification"]["success"])
+        self.assertEqual(result["post_change_verification"]["operation"], "ShowDomain")
+        self.assertIn("--arg=--cli-region=cn-north-1", result["post_change_verification"]["command"])
 
     def test_guarded_change_flow_rejects_delegated_planner(self) -> None:
         result = hcloud_guarded_change_flow.build_flow(

@@ -45,7 +45,7 @@
 - CCE / CDN / DNS / SCM / CES：已按离线验证集登记最小查询入口；其中 CDN、DNS、SCM、CCE 已支持部分目标型查询
 - OBS：不走普通 `hcloud <Service> <Operation>` 元数据路径，改用 KooCLI 集成的 `hcloud obs`/obsutil 适配器，支持 bucket list、bucket stat、lifecycle/policy get 和 planner-only lifecycle/policy/bucket 变更计划
 
-这些非 ECS 链路适合用于真实变更前的上下文确认、资源发现和风险边界梳理；在本地 operation 元数据不完整时，不应宣称已经具备和 ECS 一样完整的参数级执行能力。`service-registry.json` 中的 `resource_query_operations` 只表示“已知资源 ID 后可查询”，不会被通用 discovery 默认执行。查询脚本会宽松匹配大小写或数据集里的 operation 写法，例如 `showvpc` 会解析到 `ShowVpc`。对 CDN 这类 KooCLI 只接受固定区域集合的服务，registry 会记录 `supported_cli_regions` 和 `preferred_cli_region`，discovery/smoke 会据此生成可执行的查询命令。OBS 这类非 OpenAPI-style 命令会通过 registry 的专用 runner 路由到 `hcloud_obs_readonly.py` / `hcloud_obs_change_plan.py`。`change_flow` 用于把 planner 输出包上 dry-run、submit 确认门禁和后置只读检查；EIP 使用专用 flow，其余已登记变更的普通服务使用通用 guarded flow。
+这些非 ECS 链路适合用于真实变更前的上下文确认、资源发现和风险边界梳理；在本地 operation 元数据不完整时，不应宣称已经具备和 ECS 一样完整的参数级执行能力。`service-registry.json` 中的 `resource_query_operations` 只表示“已知资源 ID 后可查询”，不会被通用 discovery 默认执行。查询脚本会宽松匹配大小写或数据集里的 operation 写法，例如 `showvpc` 会解析到 `ShowVpc`。对 CDN 这类 KooCLI 只接受固定区域集合的服务，registry 会记录 `supported_cli_regions` 和 `preferred_cli_region`，discovery/smoke 会据此生成可执行的查询命令。OBS 这类非 OpenAPI-style 命令会通过 registry 的专用 runner 路由到 `hcloud_obs_readonly.py` / `hcloud_obs_change_plan.py`。`change_flow` 用于把 planner 输出包上 dry-run、submit 确认门禁、资源级 Show* 后置验证和服务级只读 smoke；EIP 使用专用 flow，其余已登记变更的普通服务使用通用 guarded flow。
 
 ## 在常用 Agent 中使用
 
@@ -226,7 +226,7 @@ python3 scripts/hcloud_readonly_smoke.py --service EIP --service VPC --region=<r
 python3 scripts/hcloud_service_readiness.py --service VPC --service ELB --region=<region> --project-id=<project-id> --pretty
 python3 scripts/hcloud_resource_query.py --service EIP --operation ShowPublicip --param publicip_id=<publicip-id> --region=<region> --project-id=<project-id> --pretty
 python3 scripts/hcloud_eip_change_flow.py --operation UpdatePublicip --publicip-id=<publicip-id> --arg=--publicip_id=<publicip-id> --region=<region> --project-id=<project-id> --pretty
-python3 scripts/hcloud_guarded_change_flow.py --service VPC --operation CreateSecurityGroupRule --region=<region> --project-id=<project-id> --pretty
+python3 scripts/hcloud_guarded_change_flow.py --service VPC --operation CreateSecurityGroupRule --verify-param security_group_rule_id=<rule-id> --region=<region> --project-id=<project-id> --pretty
 python3 scripts/hcloud_obs_readonly.py --operation ListBuckets --limit=20 --pretty
 python3 scripts/hcloud_resource_detail_probe.py --service EVS --service NAT --region=<region> --execute --pretty
 python3 scripts/hcloud_readonly_smoke.py --service CDN --region=<region> --project-id=<project-id> --execute --strict --pretty
@@ -238,7 +238,7 @@ python3 scripts/hcloud_readonly_smoke.py --service CDN --region=<region> --proje
 
 `hcloud_eip_change_flow.py` 默认只生成计划和后置 `ShowPublicip` 验证计划。真实提交必须显式使用 `--execute-submit --confirm-submit`，并建议先跑 `--execute-dryrun`；未确认时脚本会返回 `submit_guard_failure`，不会执行变更。
 
-`hcloud_guarded_change_flow.py` 是 VPC / ELB / EVS / NAT / RDS / CDN / DNS / SCM 等普通服务的通用 P0 风险门禁。它默认只输出计划；真实提交必须显式 `--execute-submit --confirm-submit`，且 medium/high 风险操作需要先 `--execute-dryrun` 或显式 `--skip-dryrun`。
+`hcloud_guarded_change_flow.py` 是 VPC / ELB / EVS / NAT / RDS / CDN / DNS / SCM 等普通服务的通用 P0 风险门禁。它默认只输出计划；真实提交必须显式 `--execute-submit --confirm-submit`，且 medium/high 风险操作需要先 `--execute-dryrun` 或显式 `--skip-dryrun`。脚本会根据 operation 推断资源级后置验证，例如 `CreateSecurityGroupRule` -> `ShowSecurityGroupRule`、`CreateListener` -> `ShowListener`、`CreateVolume` -> `ShowVolume`。如果真实 submit 返回资源 ID，会自动提取；否则需要用 `--verify-param KEY=VALUE` 显式传入目标 ID。需要覆盖未内置的验证时可用 `--verify-operation <ShowOperation>` 配合 `--verify-param`。
 
 ## 前置条件
 

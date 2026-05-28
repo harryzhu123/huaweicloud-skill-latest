@@ -418,6 +418,7 @@ python3 scripts/hcloud_service_change_plan.py \
 python3 scripts/hcloud_guarded_change_flow.py \
   --service VPC \
   --operation CreateSecurityGroupRule \
+  --verify-param security_group_rule_id=<rule-id> \
   --region=cn-north-4 \
   --project-id=<project-id> \
   --pretty
@@ -426,11 +427,14 @@ python3 scripts/hcloud_guarded_change_flow.py \
 用途：
 
 - 为 VPC / ELB / EVS / NAT / RDS / CDN / DNS / SCM 等普通服务横向提供 P0 风险门禁
-- 复用 `hcloud_service_change_plan.py` 的风险分类、dry-run/submit 命令和只读 smoke plan
+- 复用 `hcloud_service_change_plan.py` 的风险分类、dry-run/submit 命令、资源级 Show* 验证计划和服务级只读 smoke plan
 - 默认只生成计划，不执行真实提交
 - `--execute-dryrun` 才执行 dry-run 命令
 - `--execute-submit` 必须同时带 `--confirm-submit`，否则返回 `submit_guard_failure`
 - medium/high 风险操作提交前必须已执行 dry-run，或显式使用 `--skip-dryrun`
+- `--verify-param KEY=VALUE` 用于提供后置 Show* 查询的目标 ID；真实 submit 返回资源 ID 时会优先自动提取
+- `--verify-operation <ShowOperation>` 可覆盖内置推断，用于还没有登记服务专用 profile 的变更
+- `--execute-verify` 会执行资源级后置验证；没有目标 ID 时只返回缺参，不猜测资源
 - `--execute-readiness` 会执行后置只读 smoke plan，用于确认服务级状态
 
 它不替代服务专用 flow。EIP 使用 `hcloud_eip_change_flow.py`；OBS 使用 `hcloud_obs_change_plan.py`；ECS 创建仍使用 ECS 专用脚本。
