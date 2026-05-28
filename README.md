@@ -34,11 +34,7 @@ hcloud configure list
 - [ClawHub: huaweicloud](https://clawhub.ai/zfish-lu/huaweicloud)
 - [OpenClaw 技能市场：huaweicloud-skill](https://github.com/OpenClawAgent/OpenClaw/blob/main/docs/skill-marketplace.md#available-skills)
 
-你也可以直接在仓库中运行脚本进行验证：
-
-```bash
-python3 scripts/hcloud_context_inspect.py --pretty
-```
+安装完成后，不需要直接调用仓库里的脚本。用户只需要用自然语言告诉 Agent 目标，Agent 会按照 Skill 的规则选择合适的内部工具和执行流程。
 
 ### 3. 让 Agent 使用它
 
@@ -51,23 +47,13 @@ python3 scripts/hcloud_context_inspect.py --pretty
 
 ## 使用样例
 
+下面的样例都是给 Agent 的自然语言提示词，不是需要用户手动执行的终端命令。
+
 ### 安全盘点当前账号资源
 
 ```text
 使用 huaweicloud-skill，先检查当前 hcloud 配置，再盘点 cn-north-4
 的 ECS、VPC、Subnet、EIP 和安全组资源，输出资源摘要和发现的风险点。
-```
-
-对应的只读命令可以这样开始：
-
-```bash
-python3 scripts/hcloud_service_readiness.py \
-  --service ECS \
-  --service VPC \
-  --service EIP \
-  --region cn-north-4 \
-  --project-id <project-id> \
-  --pretty
 ```
 
 ### 把 hcloud 报错转成可诊断结果
@@ -77,31 +63,11 @@ python3 scripts/hcloud_service_readiness.py \
 区域、project_id、权限、参数还是输出格式问题，并给出下一步修复建议。
 ```
 
-对应脚本会保留 `stderr`、退出码、JSON 解析状态和归一化后的 `error_details`：
-
-```bash
-python3 scripts/hcloud_safe_exec.py \
-  --service ECS \
-  --operation ListServersDetails \
-  --arg=--cli-region=cn-north-4 \
-  --arg=--cli-output=json \
-  --expect-json \
-  --pretty
-```
-
 ### 创建 ECS 前先检查请求体
 
 ```text
 使用 huaweicloud-skill 检查这个 ECS 创建 JSON 是否完整、安全、幂等。
 不要直接创建云服务器，只输出缺失字段、风险点和推荐修复方式。
-```
-
-```bash
-python3 scripts/hcloud_ecs_create_plan.py \
-  --json-input-file examples/ecs-create-servers.cli-jsonInput.json \
-  --operation CreateServers \
-  --region cn-north-4 \
-  --pretty
 ```
 
 ### 规划一次受保护的网络变更
@@ -111,16 +77,6 @@ python3 scripts/hcloud_ecs_create_plan.py \
 列出需要我确认的参数；在我明确确认前不要提交变更。
 ```
 
-```bash
-python3 scripts/hcloud_guarded_change_flow.py \
-  --service VPC \
-  --operation CreateSecurityGroupRule \
-  --arg=--security_group_id=<security-group-id> \
-  --region cn-north-4 \
-  --project-id <project-id> \
-  --pretty
-```
-
 ### 快速确认 OBS 配置
 
 ```text
@@ -128,20 +84,12 @@ python3 scripts/hcloud_guarded_change_flow.py \
 请说明是 AK/SK、endpoint、权限还是账号侧问题。
 ```
 
-```bash
-python3 scripts/hcloud_obs_readonly.py \
-  --operation ListBuckets \
-  --limit 20 \
-  --execute \
-  --pretty
-```
-
 ## 能力亮点
 
 - **CLI-first**：优先基于本机 `hcloud` 的真实 service、operation 和 help 信息工作，减少凭空猜测。
 - **结构化上下文**：自动整理 profile、region、project、认证模式、CLI 路径、版本和常见配置问题。
 - **多服务发现**：通过 registry、playbook 和 discovery 工具覆盖 ECS、VPC、EIP、EVS、IMS、KPS、RDS、ELB、OBS、CDN、IAM 等常用服务。
-- **安全执行封装**：`hcloud_safe_exec.py` 统一处理超时、敏感信息脱敏、JSON 解析、错误分类和输出裁剪。
+- **安全执行封装**：统一处理超时、敏感信息脱敏、JSON 解析、错误分类和输出裁剪。
 - **变更门禁**：变更类流程默认包含 dry-run、风险识别、显式确认、执行记录和变更后验证。
 - **开发者友好**：架构、扩展方式、服务覆盖策略和脚本契约都沉淀在 `docs/` 中，便于继续贡献。
 
@@ -187,72 +135,33 @@ openclaw skills list --eligible
 
 ### Codex CLI / Codex App
 
-把本仓库作为本地 Skill 安装或链接后，适合用于：
+把本仓库作为本地 Skill 安装或链接后，可以直接在对话里要求 Codex 使用 `huaweicloud-skill`：
 
-- 读取 `SKILL.md` 中的执行约束。
-- 调用 `scripts/` 中的安全封装脚本。
-- 扩展 `references/service-registry.json` 与 `references/playbooks/`。
-- 运行 `tests/` 保持服务覆盖和脚本契约不退化。
+```text
+使用 huaweicloud-skill 检查当前华为云账号上下文，然后只读盘点 ECS、VPC 和 EIP。
+```
+
+```text
+使用 huaweicloud-skill 规划一次 RDS 配置变更。先输出风险、影响面和需要我确认的参数，不要直接执行。
+```
 
 ### Claude Code
 
 可以把本仓库放入 Claude Code 的 skills 目录，或在项目说明中引用 `SKILL.md`。推荐提示：
 
 ```text
-请使用 huaweicloud-skill。所有华为云查询都必须通过 hcloud 或本仓库 scripts，
+请使用 huaweicloud-skill。所有华为云查询都走 hcloud / KooCLI 路线，
 变更前必须先 dry-run，并等待我确认。
 ```
 
-## 目录结构
+## 开发者文档
 
-```text
-.
-├── SKILL.md                         # Agent 入口说明和执行规则
-├── README.md                        # 用户快速上手文档
-├── CHANGELOG.md                     # 版本变更记录
-├── RELEASE_NOTES.md                 # 发布说明
-├── docs/                            # 开发者文档：架构、实现和覆盖策略
-├── examples/                        # 常用 hcloud JSON 输入样例
-├── references/
-│   ├── service-registry.json        # 服务能力注册表
-│   └── playbooks/                   # 常见服务工作流
-├── scripts/                         # hcloud 上下文、发现、查询、规划和执行封装
-└── tests/                           # 单元测试、契约测试和人工验证记录
-```
-
-## 开发与验证
-
-开发者可以先阅读：
+README 面向普通用户快速上手。架构设计、内部脚本、服务覆盖策略和本地验证方法放在开发者文档中：
 
 - [`docs/technical-overview.md`](docs/technical-overview.md)
 - [`docs/architecture.md`](docs/architecture.md)
 - [`docs/implementation-details.md`](docs/implementation-details.md)
 - [`docs/data-and-coverage.md`](docs/data-and-coverage.md)
-
-常用本地验证：
-
-```bash
-python3 -m unittest discover tests
-python3 scripts/check_materials_drift.py --pretty
-git diff --check
-```
-
-如果要验证真实华为云账号，请先确认当前 profile、region、project 和权限，再从只读脚本开始：
-
-```bash
-python3 scripts/hcloud_context_inspect.py --pretty
-python3 scripts/hcloud_readonly_smoke.py --service VPC --region cn-north-4 --project-id <project-id> --pretty
-```
-
-## 贡献服务覆盖
-
-新增服务时建议按这个顺序迭代：
-
-1. 在 `references/service-registry.json` 中补齐 service、operation、scope、常用 discovery 和 verifier。
-2. 在 `references/playbooks/` 增加服务工作流，明确只读查询、变更前检查和变更后验证。
-3. 如有特殊参数、风险或验证逻辑，补充专用脚本。
-4. 在 `tests/` 中增加契约测试和核心路径测试。
-5. 更新 `docs/` 中的架构、实现或覆盖说明。
 
 ## License
 
