@@ -58,21 +58,21 @@ hcloud configure list
 
 下面的样例都是给 Agent 的自然语言提示词，不是需要用户手动执行的终端命令。
 
-### 安全盘点当前账号资源
+#### 安全盘点当前账号资源
 
 ```text
 使用 huaweicloud-skill，先检查当前 hcloud 配置，再盘点 cn-north-4
 的 ECS、VPC、Subnet、EIP 和安全组资源，输出资源摘要和发现的风险点。
 ```
 
-### 把 hcloud 报错转成可诊断结果
+#### 把 hcloud 报错转成可诊断结果
 
 ```text
 使用 huaweicloud-skill 执行一次 ECS 列表查询。如果失败，请解释是认证、
 区域、project_id、权限、参数还是输出格式问题，并给出下一步修复建议。
 ```
 
-### 创建 ECS 前先检查参数
+#### 创建 ECS 前先检查参数
 
 ```text
 我准备创建一台 ECS，配置包括镜像、规格、VPC、子网、安全组、密钥对、
@@ -83,21 +83,21 @@ hcloud configure list
 风险点和推荐修复方式。
 ```
 
-### 规划一次受保护的网络变更
+#### 规划一次受保护的网络变更
 
 ```text
 使用 huaweicloud-skill 规划新增一条安全组规则。先做 dry-run 和风险识别，
 列出需要我确认的参数；在我明确确认前不要提交变更。
 ```
 
-### 快速确认 OBS 配置
+#### 快速确认 OBS 配置
 
 ```text
 使用 huaweicloud-skill 检查 OBS 是否配置正确。如果 list bucket 失败，
 请说明是 AK/SK、endpoint、权限还是账号侧问题。
 ```
 
-### 变更后验证资源状态
+#### 变更后验证资源状态
 
 ```text
 使用 huaweicloud-skill 检查刚才的 EIP 绑定是否真正生效。请查询目标 ECS
