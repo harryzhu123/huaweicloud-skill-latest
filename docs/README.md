@@ -23,18 +23,18 @@
    - 了解关键脚本如何工作。
    - 重点包括安全执行、元数据发现、registry 驱动、ECS/EIP/OBS 特殊流程、通用 guarded flow 和验证器。
 4. [data-and-coverage.md](data-and-coverage.md)
-   - 了解 `references/`、`materials/`、`service-registry.json`、外部问题集和测试之间的关系。
-   - 适合扩展服务覆盖或调整数据集门禁时阅读。
+   - 了解 `references/`、`materials/`、`service-registry.json`、coverage 脚本和测试之间的关系。
+   - 适合扩展服务覆盖或调整质量门禁时阅读。
 
 ## 技术主线
 
 阅读和维护本项目时，建议抓住下面这条技术主线：
 
 1. 这不是普通 prompt，而是一个围绕华为云 KooCLI 的可执行云操作框架。
-2. 核心架构是 registry 控制面、safe exec 执行面、verifier 验证面、dataset 回归面。
+2. 核心架构是 registry 控制面、safe exec 执行面、verifier 验证面、quality gate 回归面。
 3. v0.2 已从 ECS 单点闭环扩展到 16 个服务的多服务覆盖，其中 146 个 list/query operation、61 个资源级 query operation、80 个 change operation 被纳入机器可读 registry。
 4. 写类操作默认不自动提交，而是走 plan、dry-run、显式确认和后置验证，适合真实云资源场景的风险控制。
-5. 外部问题集和 Excel E2E 验证集是回归门禁，用来持续防止 coverage 和安全边界退化。
+5. 单测、架构契约、materials drift 和 coverage 脚本是回归门禁，用来持续防止 coverage 和安全边界退化。
 
 ## 文档边界
 
@@ -55,7 +55,6 @@
 ```bash
 python3 -m unittest discover tests
 python3 scripts/check_materials_drift.py --pretty
-python3 scripts/check_question_coverage.py --pretty
 ```
 
 只改开发者文档时，至少运行：

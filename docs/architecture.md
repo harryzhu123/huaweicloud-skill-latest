@@ -15,7 +15,7 @@ v0.2 的架构重点是四个平面：
 - **控制面**：`references/service-registry.json` 决定服务、operation、runner、planner、verifier 和 known limits。
 - **执行面**：`hcloud_safe_exec.py` 统一执行、脱敏、JSON 解析和错误诊断。
 - **验证面**：job waiter、resource query、resource verifier、service readiness 分层确认结果。
-- **回归面**：单测、架构契约、materials drift、`generated_questions` 和 `data.xlsx` 覆盖检查持续约束实现。
+- **回归面**：单测、架构契约、materials drift 和 coverage 检查持续约束实现。
 
 ## 顶层结构
 
@@ -37,7 +37,7 @@ huaweicloud-skill/
 | --- | --- |
 | `SKILL.md` | 面向 agent 的入口，定义触发场景、质量规则和默认工作流。 |
 | `references/` | 清洗后的操作资料，包括 workflow、playbook、错误手册、服务覆盖矩阵和 service registry。 |
-| `scripts/` | 可执行 Python 脚本，负责上下文探查、命令生成、安全执行、规划、验证和数据集检查。 |
+| `scripts/` | 可执行 Python 脚本，负责上下文探查、命令生成、安全执行、规划、验证和 coverage 检查。 |
 | `examples/` | 可复用的输入模板和示例，例如 ECS 创建 JSON。 |
 | `materials/` | 原始 KooCLI 文档材料，只作为资料源，不直接作为运行时规则。 |
 | `tests/` | 单测、架构契约测试和人工验证记录。 |
@@ -68,7 +68,7 @@ flowchart TD
     Verify --> Report["Auditable final state"]
     Materials["materials/ raw docs"] --> References["references/ curated docs"]
     References --> Workflow
-    Datasets["generated_questions / data.xlsx"] --> CoverageGate["check_question_coverage.py"]
+    TestsInput["tests fixtures / registry"] --> CoverageGate["check_question_coverage.py"]
     CoverageGate --> Registry
     Tests["tests/ contract and unit tests"] --> Registry
     Tests --> Discovery
@@ -233,7 +233,7 @@ flowchart TB
     subgraph Quality["Quality gates"]
         UnitTests["tests/*.py"]
         Drift["check_materials_drift.py"]
-        Dataset["check_question_coverage.py"]
+        CoverageCheck["check_question_coverage.py"]
     end
 
     RuntimeRules --> ControlPlane

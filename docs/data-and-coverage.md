@@ -1,6 +1,6 @@
 # Data and Coverage
 
-`huaweicloud-skill` 的能力不是只靠代码，还依赖几类数据资产：清洗后的 references、原始 materials、机器可读 service registry、外部问题集和测试记录。本文解释这些数据如何组织，以及它们如何约束实现。
+`huaweicloud-skill` 的能力不是只靠代码，还依赖几类仓库内数据资产：清洗后的 references、原始 materials、机器可读 service registry 和测试记录。本文解释这些数据如何组织，以及它们如何约束实现。
 
 ## 数据分层
 
@@ -13,11 +13,10 @@ flowchart TD
     References --> Skill["SKILL.md"]
     References --> Registry["references/service-registry.json"]
     Registry --> Scripts["scripts/*.py"]
-    Questions["generated_questions"] --> Coverage["check_question_coverage.py"]
-    Workbook["data.xlsx"] --> Coverage
-    Coverage --> Registry
+    Registry --> Coverage["check_question_coverage.py"]
     Tests["tests/*.py"] --> Scripts
     Tests --> Registry
+    Tests --> Coverage
 ```
 
 ## `references/`
@@ -76,7 +75,7 @@ flowchart TD
 
 ## Service registry
 
-`references/service-registry.json` 是最重要的数据文件。它驱动通用 discovery、resource query、service readiness、smoke、planner 和数据集覆盖检查。
+`references/service-registry.json` 是最重要的数据文件。它驱动通用 discovery、resource query、service readiness、smoke、planner 和 coverage 检查。
 
 当前 v0.2 registry 摘要：
 
@@ -154,56 +153,16 @@ flowchart TD
 - EIP 专用 flow：`scripts/hcloud_eip_change_flow.py`，Plan -> dry-run -> guarded submit -> `ShowPublicip` verify。
 - 多服务通用 flow：`scripts/hcloud_guarded_change_flow.py`，覆盖 VPC、ELB、EVS、NAT、RDS、CDN、DNS、SCM，Plan -> dry-run -> guarded submit -> resource Show* verify -> read-only smoke。
 
-## 外部问题集
+## Coverage gate
 
-`scripts/check_question_coverage.py` 默认读取相邻数据目录中的：
+`scripts/check_question_coverage.py` 是 registry 覆盖和风险分类的质量门禁入口。开发者只需要理解它在本仓库中的作用：
 
-- `generated_questions`
-- `data-by-changping/data.xlsx`
+- 复用 `hcloud_change_plan.assess_risk()` 检查风险分类规则。
+- 检查 service registry 中的 operation 是否能映射到查询、资源查询、planner 或 guarded flow。
+- 检查 operation alias 是否能映射到真实 KooCLI operation，例如 RDS 配置详情查询映射到 `ShowConfiguration`。
+- 对架构契约测试提供 fixture 级别的安全回归能力。
 
-如果单独 checkout 本 skill，可以用参数指定路径，或用 `--skip-xlsx` 跳过 workbook。
-
-### `generated_questions`
-
-该数据集用于检查：
-
-- JSON schema 是否正确。
-- CRUD type 是否和文件名一致。
-- read-type 问题是否误包含中高风险变更。
-- delete/update 问题中的非 read-only operation 是否必须要求确认。
-- registry 对高频 operation 的覆盖比例。
-
-风险判断复用 `hcloud_change_plan.assess_risk()`，所以数据集会反向约束风险门禁实现。
-
-默认每个出现在问题集里的服务至少需要 10% registry 覆盖率。可用：
-
-```bash
-python3 scripts/check_question_coverage.py \
-  --default-min-registered-ratio=0.10 \
-  --pretty
-```
-
-### `data.xlsx`
-
-Excel 验证集用于检查人工 E2E 场景中的“验证方法”是否能映射到已注册的可执行路径。
-
-脚本会解析中文验证文本中的 operation 引用，例如：
-
-```text
-调用 VPC 查询工具（ShowVpc）确认网络存在
-```
-
-然后检查：
-
-- service 是否能推断。
-- operation 是否注册。
-- operation 是否有 runner。
-- 是否存在外部验证依赖，例如 `curl`、`kubectl`、控制台、数据库查询。
-- 是否包含副作用验证步骤，例如创建 Pod、运行容器、停用资源。
-
-部分人工写法会通过 alias 映射到真实 KooCLI operation，例如：
-
-- `RDS ShowConfigurationDetail` -> `ShowConfiguration`
+扩展 registry 或风险判断时，应同步更新该脚本和相关契约测试，确保 coverage 和安全边界没有退化。
 
 ## 测试体系
 
@@ -238,7 +197,7 @@ Excel 验证集用于检查人工 E2E 场景中的“验证方法”是否能映
 - resource-scoped query 不得误作为 generic discovery。
 - 风险分类必须符合预期。
 - materials mapping 必须 well formed。
-- generated question 和 workbook 的覆盖检查必须能识别安全 fixture。
+- coverage 检查必须能识别安全 fixture。
 
 开发者修改 registry 或风险判断时，应优先看这个测试文件。
 
@@ -263,8 +222,7 @@ v0.2 发布前的主要回归结果：
 | 单元测试 | 94 个测试通过 |
 | registry JSON | `python3 -m json.tool references/service-registry.json` 通过 |
 | materials drift | `check_materials_drift.py` 通过 |
-| generated questions | 26 个文件、448 个唯一 operation，无 schema/type/risk/coverage 错误 |
-| Excel E2E | 38 条记录，已注册 validation operation 的执行路径错误数为 0 |
+| coverage check | `check_question_coverage.py` 通过 |
 | guarded flow 矩阵 | VPC / ELB / EVS / NAT / RDS / CDN / DNS / SCM 均能生成资源级 Show* 后置验证计划 |
 
 这组验证说明项目不是只写了文档和脚本，而是把覆盖、风险和执行路径纳入了可重复检查的质量门禁。
@@ -292,11 +250,10 @@ v0.2 发布前的主要回归结果：
 - 是否能输出机器可读失败原因。
 - 是否有单测覆盖 plan 模式，不依赖真实云账号。
 
-扩展数据集门禁时，建议检查：
+扩展 coverage 门禁时，建议检查：
 
 - operation alias 是否必要。
-- service inference 是否会误判中文业务词。
-- 外部验证和副作用验证是否只作为风险线索，不应自动执行。
+- operation 归一化是否会误判服务或资源名。
 - coverage ratio 是否合理，避免把低价值 operation 大量塞进 registry。
 
 ## 推荐验证命令
@@ -306,7 +263,6 @@ v0.2 发布前的主要回归结果：
 ```bash
 python3 -m unittest discover tests
 python3 scripts/check_materials_drift.py --pretty
-python3 scripts/check_question_coverage.py --pretty
 ```
 
 只验证 registry 和多服务脚本契约时：
