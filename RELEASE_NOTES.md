@@ -1,0 +1,93 @@
+# Release Notes
+
+## v0.2 / 0.2.0 - 2026-05-28
+
+v0.2 把 `huaweicloud-skill` 从一个以 ECS 和基础 KooCLI 工具为主的技能，升级为面向多服务、可审计、可回归的华为云执行型 skill。核心变化是：查询路径更广，变更路径更安全，验证路径更具体，错误原因更容易被 agent 读取和解释。
+
+### 和 v0.1 相比
+
+| 维度 | v0.1 | v0.2 |
+| --- | --- | --- |
+| 服务覆盖 | 以 hcloud 上下文、安全执行、本地 metadata、ECS 创建计划和 ECS job 轮询为主 | 增加 ECS、VPC、RDS、IMS、EVS、EIP、ELB、NAT、KPS、IAM、CCE、CDN、DNS、SCM、OBS、CES 的 registry、只读查询、readiness 或专项适配 |
+| 查询能力 | 主要依赖通用 hcloud 命令和 ECS 相关脚本 | 增加 registry 驱动的 list 查询、显式参数的 Show*/detail 查询、大小写/别名 operation 解析、list-then-detail 抽样 |
+| 变更安全 | ECS 创建计划和 dry-run 防护较完整，其他服务主要靠人工判断 | 增加 EIP 专用 Plan -> dry-run -> guarded submit -> verify flow，以及 VPC/ELB/EVS/NAT/RDS/CDN/DNS/SCM 通用 guarded change flow |
+| 后置验证 | ECS job 轮询为主，容易把 job 终态和资源可用性混在一起 | 明确区分 job terminal state 和资源终态；新增 ECS ACTIVE 验证、多服务 JSON verifier、资源级 Show* 后置验证和服务级 readiness |
+| OBS | 不作为普通服务处理 | 新增 `hcloud obs`/obsutil 专用只读和 planner-only 变更适配器，并记录 OBS 独立凭证配置要求 |
+| 错误处理 | 能包装执行和脱敏，但失败原因偏粗 | `hcloud_safe_exec.py` 增加机器可读 `error_details`，覆盖 credential、permission、region/project、quota、parameter、not_found、network、metadata 等常见类别 |
+| 数据驱动回归 | 基础单测和参考资料 | 增加 `generated_questions`、`data.xlsx` 覆盖检查、materials drift、registry 契约、CLI mock、多服务工具测试和手工验证记录 |
+
+### 主要新增能力
+
+#### 1. 多服务 registry 和数据集覆盖
+
+- 新增 `references/service-registry.json`，统一登记服务覆盖、query operation、resource query operation、change operation、planner、change flow、verifier 和 known limits。
+- 新增 `scripts/check_question_coverage.py`，用 `generated_questions` 和 `data.xlsx` 检查 schema、风险分类、registry 覆盖、人工验证步骤风险线索和已注册验证 operation 的执行路径。
+- 当前数据集检查覆盖 26 个 generated question 文件、448 个唯一 operation、38 条 Excel E2E 记录；已注册 validation operation 的执行路径错误数为 0。
+
+#### 2. 只读查询和 readiness 广度扩展
+
+- 新增 `scripts/hcloud_resource_discovery.py`，按 registry 生成或执行 list-only 查询。
+- 新增 `scripts/hcloud_resource_query.py`，对需要资源 ID 的 Show*/detail 查询要求显式参数，避免猜测目标资源。
+- 新增 `scripts/hcloud_service_readiness.py`，按服务批量生成或执行只读 readiness 检查。
+- 新增 `scripts/hcloud_readonly_smoke.py` 和 `scripts/hcloud_resource_detail_probe.py`，用于多服务 smoke 和 list-then-detail 抽样。
+- 默认 readiness 顺序按高频服务广度优先覆盖 ECS、VPC、RDS、IMS、EVS、EIP、ELB、NAT、KPS、IAM，并补充 CCE、CDN、DNS、SCM、OBS、CES。
+
+#### 3. ECS 执行闭环加强
+
+- `scripts/hcloud_ecs_create_plan.py` 增加创建数量风险保护、占位符检测、JSON-friendly 命令输出和 shell 命令输出。
+- 新增 `scripts/hcloud_ecs_verify_active.py`，用 `ListServersDetails` 验证 ECS 实例进入 `ACTIVE`。
+- `scripts/hcloud_ecs_wait_job.py` 明确输出 `verification_scope=job_terminal_only`，避免把 job 成功误报为 ECS 可用。
+
+#### 4. 变更类安全门禁
+
+- 新增 `scripts/hcloud_change_plan.py` 和 `scripts/hcloud_service_change_plan.py`，提供通用风险分类、dry-run/submit 命令生成、服务上下文和后置验证建议。
+- 新增 `scripts/hcloud_eip_change_flow.py`，把 EIP 变更串成 Plan -> dry-run -> guarded submit -> `ShowPublicip` verify。
+- 新增 `scripts/hcloud_guarded_change_flow.py`，为 VPC、ELB、EVS、NAT、RDS、CDN、DNS、SCM 提供通用 P0 风险门禁。
+- 通用 guarded flow 现在支持资源级 Show* 后置验证：可通过 submit 结果提取资源 ID，也可用 `--verify-param KEY=VALUE` 显式传入；没有目标 ID 时返回 `missing_params`，不会猜测资源。
+- 所有真实 submit 仍需要显式 `--execute-submit --confirm-submit`；medium/high 风险操作需要先 dry-run 或显式 `--skip-dryrun`。
+
+#### 5. OBS 专项适配
+
+- 新增 `scripts/hcloud_obs_readonly.py`，支持 OBS `ListBuckets`、`StatBucket`、`GetBucketLifecycle`、`GetBucketPolicy`。
+- 新增 `scripts/hcloud_obs_change_plan.py`，支持 OBS bucket/lifecycle/policy 变更的 planner-only 命令和后置验证计划。
+- 明确 OBS 使用 `hcloud obs`/obsutil 命令形态，不走普通 `hcloud <Service> <Operation>` metadata 路线。
+- README 已补充用户需要协助配置的普通 hcloud OpenAPI profile 和 OBS obsutil 凭证项。
+
+#### 6. 错误诊断和可审计执行
+
+- `scripts/hcloud_safe_exec.py` 增加结构化脱敏和 `error_details`。
+- 新增 `scripts/hcloud_run_journal.py`，支持 JSONL run journal 汇总。
+- 常见错误会被归类并给出下一步建议，方便 agent 判断是配置、权限、区域、项目、参数、配额、网络还是云 API 问题。
+
+#### 7. 文档、playbook 和验证资产
+
+- 新增或扩展 ECS、EIP、ELB、EVS、RDS、OBS、VPC、IMS、KPS、Docker Remote API、resource idempotency 等 playbook。
+- README、SKILL、service coverage 和 manual validation 记录已同步更新。
+- 新增架构契约测试、多服务工具测试、ECS 创建/等待/ACTIVE 验证测试、safe exec 测试和 metadata lookup 测试。
+
+### 验证结果
+
+v0.2 发布前已完成以下验证：
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover tests`：94 个单测通过。
+- `python3 -m json.tool references/service-registry.json`：registry JSON 校验通过。
+- `python3 scripts/check_materials_drift.py --pretty`：整理后的 references 与原始材料映射未发现漂移。
+- `python3 scripts/check_question_coverage.py --pretty`：generated_questions 和 data.xlsx 覆盖检查通过，执行路径错误数为 0。
+- `git diff --check`：无空白格式问题。
+- VPC / ELB / EVS / NAT / RDS / CDN / DNS / SCM guarded flow plan-mode 矩阵通过，均能生成对应资源级 Show* 验证计划。
+- 多轮 live read-only 抽样已覆盖 VPC、EIP、RDS、ELB、EVS、NAT、CCE、CDN、DNS、SCM、CES、ECS、IMS、KPS、IAM；OBS 在用户重新配置 obsutil 凭证后通过 bucket list 和 bucket stat 只读验证。
+
+### 兼容性和迁移
+
+- `SKILL.md` 元数据版本为 `0.2.0`。
+- v0.1 的核心入口仍保留，包括 context inspect、safe exec、metadata lookup、ECS create plan、ECS job wait、references 和 examples。
+- 新增脚本默认都是 plan-only 或 read-only；真实云资源创建、修改、绑定、解绑、删除仍必须显式确认。
+- 对需要资源 ID 的 detail 查询，v0.2 更严格：缺少目标 ID 会返回缺参，不会用模糊列表结果代替目标资源验证。
+
+### 已知限制
+
+- 非 ECS 服务的很多 KooCLI operation detail 在本地 metadata 中仍不完整，v0.2 因此采用显式参数白名单和 planner-first 策略。
+- 通用 guarded flow 只能确认基础资源级 Show* 状态；复杂业务语义仍需要服务专用 verifier 继续扩展。
+- OBS 使用 obsutil 凭证体系，可能与普通 OpenAPI hcloud profile 不一致。
+- CDN KooCLI 查询需要使用支持的 CLI region，registry 会把不支持的区域解析到 `cn-north-1` 或其它登记区域。
+- 当前发布没有自动执行真实写操作；所有写类能力都保留确认门禁。
