@@ -41,6 +41,7 @@
       "resource_verifier": "scripts/hcloud_ecs_verify_active.py",
       "playbooks": [
         "references/playbooks/ecs-create-readiness.md",
+        "references/playbooks/ecs-ssh-access-readiness.md",
         "references/playbooks/ecs-inventory.md",
         "references/playbooks/ecs-user-data-service-readiness.md"
       ],
@@ -49,6 +50,7 @@
       ],
       "known_limits": [
         "ShowJob success is not full ECS completion; server ACTIVE verification is required.",
+        "Linux SSH access requires a preselected credential path: key_name with local private key, or adminPass saved before submit.",
         "Creation dependency discovery still relies on IAM, VPC, IMS, and KPS readiness paths.",
         "Resource-scoped list operations such as ListServerInterfaces require target IDs and are intentionally not generic discovery operations."
       ]

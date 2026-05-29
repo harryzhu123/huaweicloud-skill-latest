@@ -91,6 +91,21 @@ def is_empty_value(value: Any) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
 
+def detect_credential_mode(data: Any) -> str:
+    """Return the SSH credential mode declared by an ECS create payload."""
+    key_exists, key_name = get_path_value(data, ("body", "server", "key_name"))
+    password_exists, admin_pass = get_path_value(data, ("body", "server", "adminPass"))
+    has_key = key_exists and not is_empty_value(key_name)
+    has_password = password_exists and not is_empty_value(admin_pass)
+    if has_key and has_password:
+        return "conflict"
+    if has_key:
+        return "keypair"
+    if has_password:
+        return "password"
+    return "missing"
+
+
 def validate_payload(
     data: Any,
     allow_placeholders: bool = False,
@@ -107,6 +122,7 @@ def validate_payload(
             "errors": ["Top-level JSON value must be an object."],
             "warnings": [],
             "unresolved_placeholders": [],
+            "credential_mode": "invalid",
         }
 
     for path in REQUIRED_PATHS:
@@ -131,12 +147,22 @@ def validate_payload(
             "Use --allow-large-count only after confirming cost and quota impact."
         )
 
-    key_exists, key_name = get_path_value(data, ("body", "server", "key_name"))
-    password_exists, admin_pass = get_path_value(data, ("body", "server", "adminPass"))
-    if (not key_exists or is_empty_value(key_name)) and (not password_exists or is_empty_value(admin_pass)):
+    credential_mode = detect_credential_mode(data)
+    if credential_mode == "missing":
+        errors.append(
+            "No SSH login credential configured: set exactly one of body.server.key_name or body.server.adminPass."
+        )
+    elif credential_mode == "conflict":
+        errors.append(
+            "Conflicting SSH login credentials: body.server.key_name and body.server.adminPass must not both be set."
+        )
+    elif credential_mode == "keypair":
         warnings.append(
-            "No body.server.key_name or body.server.adminPass found. Creation may still be valid, "
-            "but login access should be verified before submit."
+            "SSH credential mode is keypair; confirm the matching private key exists locally with 0600 permissions before submit."
+        )
+    elif credential_mode == "password":
+        warnings.append(
+            "SSH credential mode is password; body.server.adminPass must be generated and saved to a restricted credential artifact before submit."
         )
 
     security_group_exists, security_group_id = get_path_value(data, ("body", "server", "security_groups", 0, "id"))
@@ -175,6 +201,7 @@ def validate_payload(
         "errors": sorted(set(errors)),
         "warnings": warnings,
         "unresolved_placeholders": placeholders,
+        "credential_mode": credential_mode if isinstance(data, dict) else "invalid",
     }
 
 
@@ -231,14 +258,22 @@ def build_next_steps(args: argparse.Namespace, validation: dict[str, Any]) -> li
             "Replace placeholders with real resource IDs before generating dry-run or submit commands.",
         ]
     if args.mode == "dryrun":
-        return [
+        steps = [
             "Run the safe_exec dry-run command and inspect the returned request or error.",
             "Only after dry-run passes, rerun this script with --mode submit --confirm-submit to build a non-dryrun command.",
         ]
-    return [
-        "Execute the submit command only after user confirmation because it can create billable resources.",
-        "Capture the returned job_id and poll it with scripts/hcloud_ecs_wait_job.py until terminal status.",
-    ]
+    else:
+        steps = [
+            "Execute the submit command only after user confirmation because it can create billable resources.",
+            "Capture the returned job_id and poll it with scripts/hcloud_ecs_wait_job.py until terminal status.",
+            "After the ECS is ACTIVE, verify SSH with the selected credential before declaring the server login-ready.",
+        ]
+    credential_mode = validation.get("credential_mode")
+    if credential_mode == "keypair":
+        steps.append("Before submit, verify the local private key that matches body.server.key_name and keep it chmod 600.")
+    elif credential_mode == "password":
+        steps.append("Before submit, save body.server.adminPass to a restricted credential artifact because Linux passwords cannot be retrieved later.")
+    return steps
 
 
 def build_result(args: argparse.Namespace) -> dict[str, Any]:

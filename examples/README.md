@@ -18,6 +18,8 @@
   - 适合 ECS `CreateServers` 的请求体参考。
 - `ecs-create-postpaid-servers.cli-jsonInput.json`
   - 适合 ECS `CreatePostPaidServers` 的请求体参考。
+- `ecs-create-servers-password.cli-jsonInput.json`
+  - 适合使用 `adminPass` 密码登录的 ECS `CreateServers` 请求体参考；密码必须先保存到受限权限 artifact。
 - `ecs-create-dryrun.md`
   - 说明维护者如何配合 dry-run 检查这些模板。
 
@@ -46,8 +48,9 @@
 
 1. 先复制模板，不要直接修改原始示例。
 2. 替换所有占位值，例如 `<project_id>`、`<availability_zone>`、`<flavor_id>`、`<image_id>`、`<subnet_id>`、`<vpc_id>`、`<security_group_id>` 和 `<key_name>`。
-3. 先做本地参数校验和 dry-run 规划。
-4. 只有在依赖资源、费用、配额和回滚方式都确认后，才考虑真实创建。
+3. 创建 Linux ECS 前确认登录方式：密钥对路线必须有本地私钥；密码路线必须先把 `adminPass` 保存到受限权限 artifact，不能依赖日志事后找回。
+4. 先做本地参数校验和 dry-run 规划。
+5. 只有在依赖资源、费用、配额、登录凭证和回滚方式都确认后，才考虑真实创建。
 
 ## 注意
 

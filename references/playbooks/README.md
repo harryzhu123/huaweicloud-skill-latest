@@ -6,6 +6,8 @@
 
 - `ecs-create-readiness.md`
   - 创建 ECS 前的依赖确认、规格和售卖策略检查。
+- `ecs-ssh-access-readiness.md`
+  - 创建 Linux ECS 前后的 SSH 登录凭证闭环和登录验收。
 - `ecs-inventory.md`
   - 查询当前 scope 下的 ECS 实例并整理成可读摘要。
 - `ecs-user-data-service-readiness.md`
@@ -38,7 +40,7 @@
 ## 选择建议
 
 - 目标是查现网 ECS：先看 `ecs-inventory.md`
-- 目标是创建 ECS：先看 `ecs-create-readiness.md`
+- 目标是创建 ECS：先看 `ecs-create-readiness.md`，需要登录机器时同时看 `ecs-ssh-access-readiness.md`
 - 目标是修复或续跑已有命名资源：先看 `resource-idempotency-reconcile.md`
 - 目标是 ECS 上部署 Web/Docker 服务：同时看 `ecs-user-data-service-readiness.md`
 - 目标是 ELB 后端健康：先看 `elb-http-backend-readiness.md`

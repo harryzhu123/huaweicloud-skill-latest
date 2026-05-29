@@ -1,0 +1,162 @@
+# ECS SSH Access Readiness Playbook
+
+## 目标
+
+创建 ECS 时同时完成 SSH 登录能力闭环，避免资源已经 `ACTIVE` 但 agent 没有可用凭证进入机器。
+
+## 适用场景
+
+- 创建 Linux ECS 后需要 SSH 登录。
+- 创建 ECS 后还要在机器内安装或排障 Web、Docker、WordPress、数据库等服务。
+- 用户要求“能登录服务器”“能远程排查”“外网可访问并能修服务”。
+
+## 创建前硬门槛
+
+创建 Linux ECS 前必须明确一种登录方式，并确保凭证在本地可用：
+
+1. 密钥对方式，推荐默认使用。
+   - `body.server.key_name` 指向目标 region 内存在的 keypair。
+   - agent 必须确认本地有对应私钥文件，并且权限限制为 `0600`。
+   - 如果 keypair 是刚创建的，必须在创建返回时立刻保存 private key；之后通常不能再次读取完整私钥。
+2. 密码方式。
+   - `body.server.adminPass` 由 agent 在创建前生成。
+   - agent 必须先把密码保存到受限权限的本地 artifact，例如 `server_credentials.json` 或只读给当前用户的 `.txt` 文件。
+   - 日志和最终回复不要明文打印密码，只说明保存位置和使用方式。
+
+`body.server.key_name` 和 `body.server.adminPass` 不要同时设置。二者同时存在时，应停止并让用户选择登录方式。
+
+如果两种凭证都不可用，不要提交 ECS 创建请求。`ACTIVE` 只代表云资源状态，不代表可以 SSH。
+
+## 密码不可事后查询
+
+Linux ECS 的 root 初始密码不是创建后再从云侧查询的可靠信息。`ShowServerPassword` 属于敏感读操作，且主要用于 Windows 初始密码场景；不要把它当作 Linux root 密码恢复路径。
+
+如果创建时没有保存 `adminPass`，也没有可用私钥，标准恢复方式是让用户确认后执行 `ResetServerPassword`，再按需重启并重新验证 SSH。
+
+## 推荐 API / CLI 序列
+
+### 1. 发现和确认登录方式
+
+密钥对路线：
+
+```bash
+python3 scripts/hcloud_resource_discovery.py \
+  --service KPS \
+  --operation ListKeypairs \
+  --region=<region> \
+  --project-id=<project-id> \
+  --pretty
+```
+
+确认 keypair 后，本地检查私钥：
+
+```bash
+test -f <private-key-file>
+stat -f '%Lp %N' <private-key-file>
+```
+
+密码路线：
+
+```bash
+python3 - <<'PY'
+import json
+import secrets
+import string
+from pathlib import Path
+
+chars = string.ascii_letters + string.digits + '!@%-_=+[]:./?'
+while True:
+    password = 'Ec2@' + ''.join(secrets.choice(chars) for _ in range(18))
+    if (
+        any(c.islower() for c in password)
+        and any(c.isupper() for c in password)
+        and any(c.isdigit() for c in password)
+        and any(c in '!@%-_=+[]:./?' for c in password)
+        and 'root' not in password.lower()
+    ):
+        break
+
+path = Path('server_credentials.json')
+path.write_text(json.dumps({'user': 'root', 'password': password}, ensure_ascii=False, indent=2), encoding='utf-8')
+path.chmod(0o600)
+print(path)
+PY
+```
+
+把生成的密码填入 ECS 创建 JSON 的 `body.server.adminPass`，不要同时设置 `key_name`。
+
+### 2. 创建前本地校验
+
+```bash
+python3 scripts/hcloud_ecs_create_plan.py \
+  --json-input-file=<ecs-create-json> \
+  --operation=CreateServers \
+  --region=<region> \
+  --pretty
+```
+
+通过条件：
+
+- `success=true`
+- `validation.errors=[]`
+- `credential_mode` 为 `keypair` 或 `password`
+- `next_steps` 明确包含对应 SSH 验证动作
+
+### 3. dry-run 和提交
+
+先执行 dry-run。只有 dry-run 通过且用户确认费用和公网暴露范围后，才执行 submit。
+
+submit 返回 `job_id` 后：
+
+```bash
+python3 scripts/hcloud_ecs_wait_job.py \
+  --job-id=<job-id> \
+  --region=<region> \
+  --project-id=<project-id> \
+  --pretty
+```
+
+再确认 ECS `ACTIVE`：
+
+```bash
+python3 scripts/hcloud_ecs_verify_active.py \
+  --server-id=<server-id> \
+  --region=<region> \
+  --project-id=<project-id> \
+  --pretty
+```
+
+### 4. SSH 验收
+
+密钥对路线：
+
+```bash
+ssh -i <private-key-file> -o StrictHostKeyChecking=accept-new root@<public-ip> 'echo SSH_OK && id && hostname'
+```
+
+密码路线：
+
+```bash
+ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no root@<public-ip>
+```
+
+验收成功条件：
+
+- 出现 `SSH_OK`。
+- `id` 显示当前用户为 `root` 或预期登录用户。
+- 可以执行只读诊断命令，例如 `hostname`、`uptime`、`ss -lntp`。
+
+## 失败分流
+
+- 22 端口不通：优先检查安全组、EIP、路由、ACL、本机代理或 VPN。
+- TCP 通但无 SSH banner：优先检查代理/TUN 路由、实例内 sshd 状态、22 端口是否被异常服务占用。
+- 出现密码提示但认证失败：检查是否使用了创建前保存的 `adminPass`，或是否需要重置密码/重启后生效。
+- 密钥认证失败：检查 keypair 名称是否匹配、私钥文件是否对应、文件权限是否为 `0600`。
+- SSH 成功但 Web 不通：进入 `ecs-user-data-service-readiness.md` 或具体服务 playbook 做应用层诊断。
+
+## 最终回复必须说明
+
+- 登录方式：`keypair` 或 `password`。
+- 凭证保存状态：私钥文件路径或密码 artifact 路径，不输出明文密码。
+- SSH 验收结果：成功命令或失败阶段。
+- 如果没有完成 SSH 验收，不能说“服务器可登录”或“应用已部署完成”。

@@ -46,6 +46,18 @@ hcloud ECS CreatePostPaidServers \
   --cli-jsonInput=examples/ecs-create-postpaid-servers.cli-jsonInput.json
 ```
 
+## 密码登录模板
+
+如果不使用 keypair，而是用 Linux root 密码登录，先生成密码并保存到受限权限 artifact，再把该密码填入模板的 `adminPass`。不要同时保留 `key_name`。
+
+```bash
+python3 scripts/hcloud_ecs_create_plan.py \
+  --json-input-file=examples/ecs-create-servers-password.cli-jsonInput.json \
+  --operation=CreateServers \
+  --region=cn-north-4 \
+  --pretty
+```
+
 ## 推荐先替换的字段
 
 - `project_id`
@@ -55,7 +67,7 @@ hcloud ECS CreatePostPaidServers \
 - `vpc_id`
 - `subnet_id`
 - `security_group_id`
-- `key_name`
+- `key_name` 或 `adminPass`，二选一；`adminPass` 必须先保存到本地凭证 artifact
 
 ## 当前环境下的现实限制
 

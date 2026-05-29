@@ -168,10 +168,61 @@ class EcsCreatePlanTest(unittest.TestCase):
         validation = hcloud_ecs_create_plan.validate_payload(payload)
 
         self.assertTrue(validation["valid"])
-        self.assertNotIn(
-            "No body.server.key_name or body.server.adminPass found. Creation may still be valid, "
-            "but login access should be verified before submit.",
+        self.assertEqual(validation["credential_mode"], "password")
+        self.assertIn(
+            "SSH credential mode is password; body.server.adminPass must be generated and saved to a restricted credential artifact before submit.",
             validation["warnings"],
+        )
+
+    def test_validate_payload_rejects_missing_login_credential(self) -> None:
+        payload = minimal_payload()
+        payload["body"]["server"].pop("key_name")
+
+        validation = hcloud_ecs_create_plan.validate_payload(payload)
+
+        self.assertFalse(validation["valid"])
+        self.assertEqual(validation["credential_mode"], "missing")
+        self.assertIn(
+            "No SSH login credential configured: set exactly one of body.server.key_name or body.server.adminPass.",
+            validation["errors"],
+        )
+
+    def test_validate_payload_rejects_conflicting_login_credentials(self) -> None:
+        payload = minimal_payload()
+        payload["body"]["server"]["adminPass"] = "password-value"
+
+        validation = hcloud_ecs_create_plan.validate_payload(payload)
+
+        self.assertFalse(validation["valid"])
+        self.assertEqual(validation["credential_mode"], "conflict")
+        self.assertIn(
+            "Conflicting SSH login credentials: body.server.key_name and body.server.adminPass must not both be set.",
+            validation["errors"],
+        )
+
+    def test_build_result_adds_keypair_next_step(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "ecs.json"
+            path.write_text(json.dumps(minimal_payload()), encoding="utf-8")
+            args = SimpleNamespace(
+                json_input_file=str(path),
+                operation="CreateServers",
+                region="cn-north-4",
+                profile=None,
+                mode="dryrun",
+                confirm_submit=False,
+                allow_placeholders=False,
+                max_count=10,
+                allow_large_count=False,
+            )
+
+            result = hcloud_ecs_create_plan.build_result(args)
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["validation"]["credential_mode"], "keypair")
+        self.assertIn(
+            "Before submit, verify the local private key that matches body.server.key_name and keep it chmod 600.",
+            result["next_steps"],
         )
 
     def test_validate_payload_warns_when_security_group_is_missing(self) -> None:
