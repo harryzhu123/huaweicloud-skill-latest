@@ -75,7 +75,18 @@ python3 scripts/hcloud_safe_exec.py \
   --pretty
 ```
 
-### 5. 创建 JSON 本地校验
+### 5. 规格和售卖策略的大输出处理
+
+`ListFlavors` 和 `ListFlavorSellPolicies` 都可能返回较大的列表。创建前只需要少量候选时，优先加 `limit`、规格名、规格族、AZ 等过滤；需要完整判断“某规格在某 AZ 是否可创建”或需要把规格与售卖策略做交叉分析时，优先落盘再处理。
+
+推荐方式：
+
+- 小样本阶段：用 `--limit` 和 `--cli-output=json` 确认字段结构。
+- 全量核验阶段：用 `--result-file=<result-json-file>` 和 `--parsed-json-file=<parsed-json-file>` 保存完整返回。
+- 对话输出：只返回候选规格、售卖状态分布、不可售原因摘要、匹配到的目标 flavor/AZ，以及落盘文件位置。
+- 后续分析：用短脚本或 `jq` 读取落盘文件做 join，不要把完整规格表或售卖策略表直接贴回对话。
+
+### 6. 创建 JSON 本地校验
 
 把已确认的镜像、规格、网络、密钥对、磁盘参数写入 `cli-jsonInput` 文件后，先做本地校验：
 
@@ -99,7 +110,7 @@ python3 scripts/hcloud_ecs_create_plan.py \
 
 如果 `validation.errors` 不为空，先修 JSON，不要进入 dry-run。
 
-### 6. dry-run
+### 7. dry-run
 
 执行上一步输出的 `commands.safe_exec`，或者手动使用：
 
@@ -117,7 +128,7 @@ python3 scripts/hcloud_safe_exec.py \
 
 dry-run 通过只说明命令和参数骨架可被校验，不代表资源已经创建。
 
-### 7. 真实提交和终态验证
+### 8. 真实提交和终态验证
 
 只有当用户明确确认会产生费用的真实创建后，才生成非 dry-run 命令：
 

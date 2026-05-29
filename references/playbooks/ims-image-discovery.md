@@ -62,6 +62,17 @@ python3 scripts/hcloud_meta_lookup.py --service=IMS --allow-help-fallback --pret
 - 先向用户说明当前 discovery 受环境限制
 - 先继续完成 ECS readiness 里其他已知部分
 
+## 大输出处理
+
+`ListImages` 默认按高风险大输出 API 处理。公共镜像、共享镜像和跨平台查询可能返回大量镜像元数据，不要默认把完整 JSON 带回对话。
+
+推荐做法：
+
+1. 先用小 `limit` 或明确过滤条件确认返回结构。
+2. 查询公共系统镜像时优先考虑 `visibility`、`status`、`name`、`architecture`、`__platform`、`__imagetype` 等过滤参数，真实参数以当前 operation help 为准。
+3. 如果需要全量核验镜像范围，把完整结果写入 `--result-file` / `--parsed-json-file`，对话里只返回总数、候选样本、关键字段和文件位置。
+4. 后续筛选镜像时读取落盘文件做字段投影，不要直接 `cat` 全量结果。
+
 ## 在 ECS 创建里的作用
 
 IMS 侧至少需要回答：

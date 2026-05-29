@@ -121,6 +121,7 @@ version: "0.2.0"
    - 默认使用 `--cli-output=json`
    - 需要提炼时再加 `--cli-query`
    - 大结果默认先限制 `limit` 或筛选字段
+   - `ListImages`、`ListFlavors`、`ListFlavorSellPolicies` 等大列表 API 默认视为高风险大输出；如果需要全量或大范围核验，优先考虑 `--result-file` / `--parsed-json-file` 落盘，只把条数、关键字段样本、摘要和文件位置带回对话
 4. 复杂参数不要硬拼长命令
    - 优先 `--skeleton`
    - 或使用 `--cli-jsonInput`

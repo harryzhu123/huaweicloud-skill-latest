@@ -84,7 +84,45 @@
   - 满足条件的候选项
   - Top N
 
-## 五、推荐例子
+## 五、高风险大输出 API
+
+以下 API 容易返回很大的列表或宽字段对象，执行前要先判断是否真的需要全量进入上下文：
+
+- `IMS ListImages`：镜像列表，公共镜像和共享镜像可能很多。
+- `ECS ListFlavors`：规格列表，字段多，按区域和规格族展开后可能很大。
+- `ECS ListFlavorSellPolicies`：售卖策略列表，常需要和规格、AZ 做交叉分析。
+
+推荐处理顺序：
+
+1. 能用服务端过滤时，先加过滤参数，例如 `limit`、`marker`、`name`、`status`、`visibility`、`architecture`、`flavor_id`、`availability_zone` 等，真实参数以 operation help 为准。
+2. 只需要少量展示时，再用 `--cli-query` 做字段投影或 Top N。
+3. 需要全量核验、跨 API join、排查售卖策略差异时，优先把完整结果落盘，不要把完整 JSON 打印回对话。
+4. 落盘后只向对话返回小摘要：命令是否成功、文件位置、顶层 key、候选数组条数、少量关键字段样本、下一步筛选方式。
+5. 后续读取文件时也不要 `cat` 全量 JSON；用 `jq`、短脚本或 `--cli-query` 等方式只取必要字段。
+
+推荐落盘命令形态：
+
+```bash
+python3 scripts/hcloud_safe_exec.py \
+  --service ECS \
+  --operation ListFlavors \
+  --arg=--cli-region=<region> \
+  --arg=--project_id=<project-id> \
+  --arg=--cli-output=json \
+  --expect-json \
+  --result-file=<result-json-file> \
+  --parsed-json-file=<parsed-json-file>
+```
+
+注意：`hcloud_safe_exec.py` 会把结构化结果写入 `result-file`，把解析后的主体写入 `parsed-json-file`。如果调用方同时要求 `--pretty`，仍要确认不会把巨大 `parsed_json` 打回当前上下文；必要时不加 `--pretty`，或者先用更小的 `limit` 确认结构后再全量落盘。
+
+建议摘要字段：
+
+- `ListImages`：`id`、`name`、`status`、`visibility`、`__platform`、`__imagetype`、`os_version`、`min_disk`、`min_ram`、`created_at`。
+- `ListFlavors`：`id`、`name`、`vcpus`、`ram`、`disk`、`os_extra_specs` 中和虚拟化、规格族、可用区相关的字段。
+- `ListFlavorSellPolicies`：`flavor_id` / `flavor_name`、`availability_zone`、`sell_status`、`sell_mode`、`spot_options`、限制原因类字段。
+
+## 六、推荐例子
 
 ### 1. 看配置项列表
 
@@ -115,7 +153,7 @@ hcloud ECS ListFlavors \
 
 上面的字段表达式只是示意，真实字段名应以当前返回体为准。
 
-## 六、何时不要强上 `--cli-query`
+## 七、何时不要强上 `--cli-query`
 
 以下情况不要先写复杂表达式：
 
@@ -125,7 +163,7 @@ hcloud ECS ListFlavors \
 
 此时先拿一版小样本原始 JSON，再决定 query。
 
-## 七、结果落盘
+## 八、结果落盘
 
 当查询结果后面还要继续被脚本消费时，可以直接用包装脚本落盘：
 
