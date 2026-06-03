@@ -7,8 +7,13 @@ import argparse
 import json
 import re
 import shlex
+import sys
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 
 PLACEHOLDER_PATTERN = re.compile(r"<[^<>]+>")
@@ -113,6 +118,8 @@ def validate_payload(
     allow_large_count: bool = False,
 ) -> dict[str, Any]:
     """Validate an ECS create cli-jsonInput payload without calling Huawei Cloud."""
+    import hcloud_security_policy
+
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -123,6 +130,7 @@ def validate_payload(
             "warnings": [],
             "unresolved_placeholders": [],
             "credential_mode": "invalid",
+            "policy_violations": [],
         }
 
     for path in REQUIRED_PATHS:
@@ -196,12 +204,17 @@ def validate_payload(
     elif not isinstance(publicip, dict):
         errors.append("body.server.publicip must be an object when present.")
 
+    policy_violations = hcloud_security_policy.check_json_payload(data)
+    for violation in policy_violations:
+        errors.append(f"Security group policy violation at {violation['path']}: {violation['message']}")
+
     return {
         "valid": not errors,
         "errors": sorted(set(errors)),
         "warnings": warnings,
         "unresolved_placeholders": placeholders,
         "credential_mode": credential_mode if isinstance(data, dict) else "invalid",
+        "policy_violations": policy_violations,
     }
 
 
@@ -302,6 +315,7 @@ def build_result(args: argparse.Namespace) -> dict[str, Any]:
             "errors": [f"JSON input file not found: {json_input_file}"],
             "warnings": [],
             "unresolved_placeholders": [],
+            "policy_violations": [],
         }
     except json.JSONDecodeError as exc:
         validation = {
@@ -309,6 +323,7 @@ def build_result(args: argparse.Namespace) -> dict[str, Any]:
             "errors": [f"Invalid JSON input file: {exc}"],
             "warnings": [],
             "unresolved_placeholders": [],
+            "policy_violations": [],
         }
 
     all_errors = errors + validation["errors"]

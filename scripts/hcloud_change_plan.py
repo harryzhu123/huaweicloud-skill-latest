@@ -9,6 +9,7 @@ import re
 import shlex
 from typing import Any
 
+import hcloud_security_policy
 from hcloud_core import CommandPlan, RiskAssessment
 
 
@@ -225,6 +226,24 @@ def build_command(args: argparse.Namespace, use_dryrun: bool) -> list[str]:
 def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     """Build a risk-gated change plan without executing it."""
     risk = assess_risk(args.operation, dryrun_supported=not args.no_dryrun)
+    policy_check = hcloud_security_policy.check_change_inputs(args.arg, args.json_input_file)
+    policy_violations = policy_check["violations"]
+    if policy_violations:
+        return {
+            "success": False,
+            "service": args.service,
+            "operation": args.operation,
+            "risk": risk.to_dict(),
+            "policy_violations": policy_violations,
+            "policy_scan_error": policy_check["scan_error"],
+            "commands": {},
+            "next_steps": [
+                "Replace 0.0.0.0/0 with a restricted source CIDR before planning or submitting the security group change.",
+                "For SSH, prefer a fixed administrator IP, VPN CIDR, bastion host, or private management network.",
+                "For HTTP/Web ports, use the expected client CIDR, load balancer source range, private CIDR, or an explicitly approved allowlist.",
+                "Re-run the planner after updating the source range.",
+            ],
+        }
     dryrun_command = build_command(args, use_dryrun=risk.dryrun_required)
     submit_command = build_command(args, use_dryrun=False)
     warnings: list[str] = []
@@ -237,6 +256,8 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
             warnings.append("Do not run the command until the user has confirmed sensitive output scope and handling expectations.")
     if risk.dryrun_required and args.no_dryrun:
         warnings.append("Dry-run was disabled by --no-dryrun; use only when the operation does not support dry-run.")
+    if policy_check["scan_error"]:
+        warnings.append(policy_check["scan_error"])
 
     command_plan = CommandPlan(
         service=args.service,

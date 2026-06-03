@@ -1,7 +1,7 @@
 ---
 name: huaweicloud-skill
 description: 使用 hcloud 命令行工具执行华为云资源查询、分析、规划和变更。适用于用户明确要走 CLI/KooCLI 路线，或任务需要通过 hcloud 直接发现 service/operation、构造命令、执行查询或变更、排查认证、网络、缓存与输出格式问题的场景。
-version: "0.2.1"
+version: "0.2.2"
 ---
 
 # Huawei CLI Skill
@@ -63,7 +63,14 @@ version: "0.2.1"
 - ELB 后端必须确认成员 `operating_status=ONLINE`；若 `CONNECT_FAILED`，优先排查后端安全组、服务进程是否监听、健康检查端口/路径、后端子网 ID 是否匹配。
 - 如果没有远程命令能力，可用 EIP + 协议探测验证；如果协议探测不通，不要宣布应用部署成功。
 
-### 7. ECS 初始化和远程排障
+### 7. 安全组入口端口必须收敛
+
+- 安全组入方向规则中，SSH 端口 `22` 和常见 Web 入口端口 `80`、`443`、`3000`、`5000`、`8000`、`8080` 不允许使用 `0.0.0.0/0` 作为来源。
+- 即使用户目标是公网访问，也不要自动生成或提交上述端口到全网来源的规则；应让用户提供固定客户端 IP、办公网 CIDR、VPN CIDR、跳板机/堡垒机来源、负载均衡来源或私网 CIDR。
+- 创建或修改安全组规则前，必须明确 `direction`、`protocol`、端口范围和来源 CIDR；若来源是 `0.0.0.0/0` 且端口命中上述清单，应停止提交并输出安全策略违规原因。
+- ECS 创建参数若只引用已有安全组 ID，提交前要查询 `ListSecurityGroupRules` 或 `ShowSecurityGroup` 复核入方向规则；不要假设已有安全组是安全的。
+
+### 8. ECS 初始化和远程排障
 
 - 复杂 ECS 创建优先使用 `--cli-jsonInput` 或临时 JSON 文件，避免超长单行命令、base64、嵌套数组参数被 shell 转义破坏。
 - 创建 Linux ECS 前必须先选定 SSH 登录凭证模式：`key_name` 加本地可用私钥，或 `adminPass` 加已保存的密码 artifact；两者不要同时设置，两者都不可用时不要提交创建。
@@ -75,7 +82,7 @@ version: "0.2.1"
 - 对 Ubuntu 安装 Docker，优先选择当前区域可达的官方/云镜像源；安装失败时可降级为发行版仓库中的 `docker.io`，并说明降级影响。
 - 远程暴露 Docker TCP 2375 属于高风险配置；只有用户明确要求时才开放，并在最终输出中提示这是未加密管理端口。
 
-### 8. 幂等修复与保守收敛
+### 9. 幂等修复与保守收敛
 
 - 创建前按资源名做幂等查询；发现同名资源时先读 `references/playbooks/resource-idempotency-reconcile.md`，选择 canonical resource 修复，不要继续创建同名资源。
 - ECS 内服务、Docker Remote API、ELB HTTP 后端这类可达性任务，应优先读取对应 readiness playbook，使用可重复执行的初始化和验收流程。

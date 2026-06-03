@@ -62,6 +62,7 @@ SERVICE_CONTEXT_HINTS = {
     "VPC": [
         "Resolve region, project, VPC CIDR, subnet CIDR, availability zone, and security group intent.",
         "For security group rules, require direction, protocol, port range, and remote IP prefix.",
+        "Do not use 0.0.0.0/0 for SSH 22 or common Web ports 80, 443, 3000, 5000, 8000, and 8080.",
     ],
     "ELB": [
         "Resolve VPC, subnet, EIP/public/private network type, listener port, pool protocol, health monitor, and backend member address.",
@@ -184,6 +185,24 @@ def build_service_plan(args: argparse.Namespace) -> dict[str, Any]:
     plan_args = planner_args(args, cli_region)
     plan_args.operation = operation
     plan = hcloud_change_plan.build_plan(plan_args)
+    if not plan.get("success"):
+        plan.update(
+            {
+                "planning_only": True,
+                "registered_change_operation": registered,
+                "coverage": entry.get("coverage"),
+                "service_known_limits": entry.get("known_limits", []),
+                "service_context_hints": SERVICE_CONTEXT_HINTS.get(service, []),
+                "service_verification_hints": SERVICE_VERIFICATION_HINTS.get(service, []),
+                "submit_requires_confirmation": True,
+                "submit_is_not_executed_by_this_planner": True,
+            }
+        )
+        if region_resolution:
+            plan["region_resolution"] = region_resolution
+        if requested_operation != operation:
+            plan["requested_operation"] = requested_operation
+        return plan
     plan.update(
         {
             "success": True,

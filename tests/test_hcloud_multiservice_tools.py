@@ -271,6 +271,27 @@ class MultiServiceToolsTest(unittest.TestCase):
         self.assertEqual(result["submit_guard_failure"]["error"], "Submit execution requires --confirm-submit.")
         self.assertTrue(result["planning_only"])
 
+    def test_guarded_change_flow_blocks_unrestricted_sensitive_ingress_rule(self) -> None:
+        result = hcloud_guarded_change_flow.build_flow(
+            self.guarded_flow_args(
+                arg=[
+                    "--direction=ingress",
+                    "--protocol=tcp",
+                    "--remote_ip_prefix=0.0.0.0/0",
+                    "--port_range_min=22",
+                    "--port_range_max=22",
+                ],
+            )
+        )
+
+        self.assertFalse(result["success"], result)
+        self.assertFalse(result["service_plan"]["success"])
+        self.assertEqual(
+            result["service_plan"]["policy_violations"][0]["code"],
+            "unrestricted_sensitive_ingress_port",
+        )
+        self.assertEqual(result["service_plan"]["commands"], {})
+
     def test_guarded_change_flow_executes_dryrun_and_readiness_with_mocks(self) -> None:
         with patch.object(
             hcloud_guarded_change_flow,

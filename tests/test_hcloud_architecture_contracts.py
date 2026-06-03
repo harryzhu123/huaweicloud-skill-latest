@@ -275,6 +275,75 @@ class ArchitectureContractsTest(unittest.TestCase):
         self.assertTrue(risk.requires_confirmation)
         self.assertTrue(risk.verification_required)
 
+    def test_change_plan_blocks_unrestricted_sensitive_ingress_ports(self) -> None:
+        for port in (22, 80, 443, 3000, 5000, 8000, 8080):
+            with self.subTest(port=port):
+                args = SimpleNamespace(
+                    service="VPC",
+                    operation="CreateSecurityGroupRule",
+                    region="cn-north-4",
+                    project_id="project-1",
+                    profile=None,
+                    json_input_file=None,
+                    arg=[
+                        "--direction=ingress",
+                        "--protocol=tcp",
+                        "--remote_ip_prefix=0.0.0.0/0",
+                        f"--port_range_min={port}",
+                        f"--port_range_max={port}",
+                    ],
+                    no_dryrun=False,
+                )
+
+                plan = hcloud_change_plan.build_plan(args)
+
+                self.assertFalse(plan["success"], plan)
+                self.assertEqual(plan["commands"], {})
+                self.assertEqual(plan["policy_violations"][0]["code"], "unrestricted_sensitive_ingress_port")
+                self.assertIn(port, plan["policy_violations"][0]["ports"])
+
+    def test_change_plan_allows_restricted_or_non_sensitive_security_group_rules(self) -> None:
+        cases = [
+            [
+                "--direction=ingress",
+                "--protocol=tcp",
+                "--remote_ip_prefix=203.0.113.10/32",
+                "--port_range_min=22",
+                "--port_range_max=22",
+            ],
+            [
+                "--direction=egress",
+                "--protocol=tcp",
+                "--remote_ip_prefix=0.0.0.0/0",
+                "--port_range_min=22",
+                "--port_range_max=22",
+            ],
+            [
+                "--direction=ingress",
+                "--protocol=tcp",
+                "--remote_ip_prefix=0.0.0.0/0",
+                "--port_range_min=9000",
+                "--port_range_max=9000",
+            ],
+        ]
+        for arg in cases:
+            with self.subTest(arg=arg):
+                args = SimpleNamespace(
+                    service="VPC",
+                    operation="CreateSecurityGroupRule",
+                    region="cn-north-4",
+                    project_id="project-1",
+                    profile=None,
+                    json_input_file=None,
+                    arg=arg,
+                    no_dryrun=False,
+                )
+
+                plan = hcloud_change_plan.build_plan(args)
+
+                self.assertTrue(plan["success"], plan)
+                self.assertNotIn("policy_violations", plan)
+
     def test_materials_drift_mapping_is_well_formed(self) -> None:
         result = check_materials_drift.check_mapping()
 

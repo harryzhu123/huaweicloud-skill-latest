@@ -27,6 +27,15 @@
 
 如果两种凭证都不可用，不要提交 ECS 创建请求。`ACTIVE` 只代表云资源状态，不代表可以 SSH。
 
+## SSH 安全组来源限制
+
+SSH 连通性不能通过全网开放来兜底。创建或复用安全组前必须确认：
+
+- 入方向 TCP `22` 的来源 CIDR 不能是 `0.0.0.0/0`。
+- 推荐来源是固定管理员 IP `/32`、办公网 CIDR、VPN CIDR、跳板机/堡垒机安全组或私网管理网段。
+- 如果 ECS 创建 JSON 只引用已有安全组 ID，提交前先查询 `ListSecurityGroupRules` 或 `ShowSecurityGroup`，确认没有 `22` + `0.0.0.0/0`。
+- 如果用户要求“临时开放 SSH”，仍要让用户给出具体来源 IP/CIDR；不要生成全网 SSH 规则。
+
 ## 密码不可事后查询
 
 Linux ECS 的 root 初始密码不是创建后再从云侧查询的可靠信息。`ShowServerPassword` 属于敏感读操作，且主要用于 Windows 初始密码场景；不要把它当作 Linux root 密码恢复路径。

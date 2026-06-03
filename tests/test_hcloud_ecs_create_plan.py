@@ -238,6 +238,45 @@ class EcsCreatePlanTest(unittest.TestCase):
             validation["warnings"],
         )
 
+    def test_validate_payload_rejects_embedded_unrestricted_sensitive_ingress_rule(self) -> None:
+        payload = minimal_payload()
+        payload["body"]["server"]["security_group_rules"] = [
+            {
+                "direction": "ingress",
+                "protocol": "tcp",
+                "remote_ip_prefix": "0.0.0.0/0",
+                "port_range_min": 80,
+                "port_range_max": 80,
+            }
+        ]
+
+        validation = hcloud_ecs_create_plan.validate_payload(payload)
+
+        self.assertFalse(validation["valid"])
+        self.assertEqual(validation["policy_violations"][0]["code"], "unrestricted_sensitive_ingress_port")
+        self.assertEqual(validation["policy_violations"][0]["ports"], [80])
+        self.assertTrue(
+            any(error.startswith("Security group policy violation") for error in validation["errors"]),
+            validation["errors"],
+        )
+
+    def test_validate_payload_allows_embedded_restricted_sensitive_ingress_rule(self) -> None:
+        payload = minimal_payload()
+        payload["body"]["server"]["security_group_rules"] = [
+            {
+                "direction": "ingress",
+                "protocol": "tcp",
+                "remote_ip_prefix": "203.0.113.10/32",
+                "port_range_min": 22,
+                "port_range_max": 22,
+            }
+        ]
+
+        validation = hcloud_ecs_create_plan.validate_payload(payload)
+
+        self.assertTrue(validation["valid"], validation)
+        self.assertEqual(validation["policy_violations"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

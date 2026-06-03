@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 - 2026-06-03
+
+- Added a security group ingress policy that blocks `0.0.0.0/0` for SSH `22` and common Web ports `80`, `443`, `3000`, `5000`, `8000`, and `8080`.
+- Added offline planner checks so `hcloud_change_plan.py`, service change plans, guarded VPC flows, and ECS create JSON validation surface these violations before dry-run or submit.
+- Updated SSH, VPC, and ELB readiness playbooks plus README guidance to require restricted source CIDRs for exposed SSH/Web ports.
+
 ## 0.2.1 - 2026-05-29
 
 - Strengthened large-output handling guidance for `IMS ListImages`, `ECS ListFlavors`, and `ECS ListFlavorSellPolicies`.
