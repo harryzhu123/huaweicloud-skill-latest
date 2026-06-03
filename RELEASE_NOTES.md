@@ -1,5 +1,32 @@
 # Release Notes
 
+## v0.2.3 / 0.2.3 - 2026-06-03
+
+v0.2.3 improves practical ECS in-guest execution for real deployment workflows. It keeps the v0.2.2 safety posture, while making it clearer that agents may save task-scoped private keys and use controlled SSH/cloud-init fallback paths when remote command/COC is unavailable.
+
+### Changes Since v0.2.2
+
+- Adds generic in-guest execution guidance:
+  - ECS-backed tasks must distinguish cloud-side resource state from OS/application state.
+  - Agents should continue through saved SSH keys, exportable keypairs, reset password, or cloud-init reinstall/rebuild when the resource is new, test, demo, deployment-oriented, stateless, or otherwise replaceable.
+  - Agents should stop and request authorization before destructive recovery on existing stateful resources.
+- Expands key management guidance:
+  - Agents may create task-scoped KPS keypairs and save returned `private_key` values into restricted local artifacts.
+  - New ECS resources that need later installation, mounting, or service startup should be created with a usable management path from the start.
+- Expands EVS readiness:
+  - EVS `in-use` is not enough to declare `/data` or any mount point ready.
+  - The skill now documents naming/capacity inference, duplicate-disk avoidance, SSH fallback, idempotent filesystem mounting, and write-test verification.
+- Expands ELB HTTP backend readiness:
+  - Adds canonical VPC/subnet topology prechecks before listener/pool/member churn.
+  - Clarifies when cross-VPC IP targets are valid and when backend ECS should be rebuilt into a reachable topology.
+  - Requires backend service startup and member `ONLINE` evidence before declaring end-to-end HTTP completion.
+
+### Validation
+
+- Documentation-only change.
+- `git diff --check` passed before commit.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover tests` passed.
+
 ## v0.2.2 / 0.2.2 - 2026-06-03
 
 v0.2.2 is a safety and communication patch release on top of v0.2.1. It strengthens ECS login readiness, tightens security group ingress behavior, and adds Mermaid topology diagrams as a standard way to clarify cloud resource relationships with users.

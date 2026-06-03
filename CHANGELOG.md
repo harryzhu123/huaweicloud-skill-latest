@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.3 - 2026-06-03
+
+- Strengthened generic in-guest execution guidance for ECS-backed tasks when COC/remote command is unavailable.
+- Allowed agents to create task-scoped keypairs and save returned private keys as restricted local artifacts for SSH validation and follow-up operations.
+- Added SSH fallback guidance using saved keys, exportable keypairs, reset password, restricted temporary SSH ingress, and cloud-init reinstall/rebuild for replaceable resources.
+- Expanded EVS readiness guidance to distinguish cloud-side attachment from in-guest filesystem readiness, including `/data` mount verification and idempotent mount scripts.
+- Expanded ELB HTTP backend readiness guidance with topology prechecks, cross-VPC/IP-target boundaries, backend service startup handling, and health-check service fallback.
+- Added stable semantic naming and capacity inference guidance for resources whose names or sizes are not explicitly specified by the user.
+
 ## 0.2.2 - 2026-06-03
 
 - Added an ECS SSH credential readiness flow, including keypair/password selection, local credential artifact requirements, and post-`ACTIVE` SSH validation guidance.

@@ -1,7 +1,7 @@
 ---
 name: huaweicloud-skill
 description: 使用 hcloud 命令行工具执行华为云资源查询、分析、规划和变更。适用于用户明确要走 CLI/KooCLI 路线，或任务需要通过 hcloud 直接发现 service/operation、构造命令、执行查询或变更、排查认证、网络、缓存与输出格式问题的场景。
-version: "0.2.2"
+version: "0.2.3"
 ---
 
 # Huawei CLI Skill
@@ -43,6 +43,8 @@ version: "0.2.2"
 ### 4. 缺省参数先发现再选择
 
 - 创建类任务缺少 image、flavor、AZ、VPC、subnet、keypair、root volume 等常见参数时，优先通过查询选择合理默认值，不要过早追问。
+- 用户没有指定资源名时，使用稳定、语义化、可复用的名称，而不是每轮随机名；例如应用数据盘可使用 `disk-<workload>-data`，公共入口可使用 `lb-<workload>-<role>`，健康检查占位服务可使用 `ppx-health-<port>`。后续修复必须先按这些名称查询并复用。
+- 对“应用数据盘”“大一点的数据盘”“挂到 /data”这类缺少明确磁盘容量的任务，先根据用户目标、现有系统盘大小、成本风险、配额和区域可售规格推断容量/类型。若只是为了一般应用数据落盘，选择普通高性能 SSD/GPSSD 类数据盘通常更稳；最终说明选择依据和可调整项。
 - 推荐顺序：
   1. 复用同 region 下最近一条 `ACTIVE` 同类资源的参数组合。
   2. 从公共列表里选普通、可用、低风险的默认项，例如 Linux 公共镜像、通用计算规格、可用 AZ、已有 VPC/子网。
@@ -65,6 +67,7 @@ version: "0.2.2"
 - 如果要依赖 `cloud-init` 安装软件，创建前把脚本做成幂等流程：先创建父目录，再写配置；先配置软件源，再安装；最后 `enable`、`restart` 服务。
 - 对外可达服务至少检查三层：安全组规则、EIP/监听器/后端绑定、协议探测结果，例如 HTTP 200、Docker `/version` JSON、数据库连接成功。
 - ELB 后端必须确认成员 `operating_status=ONLINE`；若 `CONNECT_FAILED`，优先排查后端安全组、服务进程是否监听、健康检查端口/路径、后端子网 ID 是否匹配。
+- ELB、NAT、VPC 路由等网络编排任务必须先确定 canonical VPC/subnet。后端 ECS 分属不同 VPC、member subnet 与 ECS 网卡不匹配、或 ELB 与后端网络不可达时，不要反复重建 listener/member；VPC peering 不是普通 ELB instance member 的默认修复方式，除非用户明确要求跨 VPC 后端且 API 明确支持 IP target。对新建、演示、测试、无状态服务或可替换部署资源，可以重装/重建不兼容后端并保留用户要求的资源名；对需保留状态的既有业务资源，只输出拓扑阻塞和最小变更建议。
 - 如果没有远程命令能力，可用 EIP + 协议探测验证；如果协议探测不通，不要宣布应用部署成功。
 
 ### 7. 安全组入口端口必须收敛
@@ -78,9 +81,10 @@ version: "0.2.2"
 
 - 复杂 ECS 创建优先使用 `--cli-jsonInput` 或临时 JSON 文件，避免超长单行命令、base64、嵌套数组参数被 shell 转义破坏。
 - 创建 Linux ECS 前必须先选定 SSH 登录凭证模式：`key_name` 加本地可用私钥，或 `adminPass` 加已保存的密码 artifact；两者不要同时设置，两者都不可用时不要提交创建。
-- 若创建 keypair 用于后续 SSH，必须把返回的 private key 保存到受限权限文件，例如 `chmod 600`，并记录 keypair 名称；否则不要把 SSH 当成可用降级路径。
+- 若创建 keypair 用于后续 SSH，必须把返回的 private key 保存到受限权限文件，例如 `chmod 600`，并记录 keypair 名称；否则不要把 SSH 当成可用降级路径。优先使用 `KPS CreateKeypair` 新建任务专用 keypair 并保存返回的 `private_key`，不要只引用无法导出私钥的旧 keypair。
 - 若使用 `adminPass`，密码必须在创建前生成并保存到受限权限 artifact；不要依赖日志或 `ShowServerPassword` 事后找回 Linux root 密码。
 - ECS 创建完成不能只停在 `ACTIVE`；需要继续用选定凭证执行 SSH 验收，至少跑通 `echo SSH_OK && id && hostname`，否则不要宣称服务器可登录。
+- 如果 ECS 创建后还需要安装软件、启动服务、挂载磁盘或做应用验收，创建时必须预埋可纳管通道：可用 keypair private key、cloud-init 完成目标脚本、或明确可用的密码登录配置。不要把“创建 ECS 成功”当作后续机内动作可执行的保证；没有 COC 时，保存私钥和 cloud-init 是默认必选项。
 - 创建公网可访问 ECS 时，如果目标安全组不存在或缺少 22/80/443 入方向，先按 VPC/企业项目查询现有安全组和规则；若 `CreateSecurityGroupRule` / `vpc:securityGroupRules:create` 被 SCP 或 IAM 显式拒绝，不要反复补规则，可复用已有同时满足目标端口、VPC/企业项目和风险边界的安全组，并在最终输出说明安全组名称与用户原命名要求的偏差。
 - `cloud-init` 脚本中写 `/etc/docker/daemon.json`、systemd drop-in、Nginx 站点配置等文件前，先 `mkdir -p` 父目录。
 - 对 Ubuntu 安装 Docker，优先选择当前区域可达的官方/云镜像源；安装失败时可降级为发行版仓库中的 `docker.io`，并说明降级影响。
@@ -92,6 +96,26 @@ version: "0.2.2"
 - ECS 内服务、Docker Remote API、ELB HTTP 后端这类可达性任务，应优先读取对应 readiness playbook，使用可重复执行的初始化和验收流程。
 - 收敛规则必须保守：只在明确硬阻塞、同一失败已基于新证据修复至少两轮仍无进展、或后续只剩外部等待且继续执行不会改变状态时，才停止并输出部分完成结果。
 - 只要还有明确、低风险、与用户目标直接相关的下一步，不要提前交卷；也不要把未通过协议探测或健康检查的组件写成已完成。
+
+### 10. 机内执行和 SSH fallback
+
+- 涉及 ECS 内部状态的任务，例如格式化/挂载数据盘、写 `/etc/fstab`、安装软件、启动后端服务、执行 `docker info`，必须先区分“云侧资源已挂载/已配置”和“机内系统已生效”。
+- 首选通道：创建 ECS 时的 cloud-init/user_data、已经可用的远程命令/COC、用户已提供或本地已验证可用的 SSH 凭据。
+- 新建、演示、测试、部署类资源默认可重建/重装，除非用户明确说要保留系统盘状态。对于这类资源，不能因为缺 COC 就把任务停在云侧配置；应通过保存私钥、cloud-init、或重装/重建纳管继续打通流程。
+- 如果任务是创建、部署、配置或验收类，且 COC/远程命令不可用，可以把受控 SSH fallback 视为通用纳管步骤，而不是硬阻塞：
+  1. 对新建 ECS：先用 `KPS CreateKeypair` 创建任务专用 keypair，把响应里的 `private_key` 保存到 `~/.cloud-ppx/keys/huawei/<region>/<keypair>.pem` 或 `$CLOUD_PPX_KEY_DIR` 下并 `chmod 600`，ECS 创建 body 使用该 `key_name`。创建后立即用 `ssh -i` 验证。
+  2. 对已有 ECS：先找本地已保存的 private key；若 ECS 有 keypair name，再尝试 `KPS ExportPrivateKey`，只有拿到私钥并验证成功才把 key 登录视为可用。
+  3. key 不可用时，用 `ShowResetPasswordFlag` 确认目标 ECS 支持在线重置密码。
+  4. 生成一次性强密码，调用 `ECS ResetServerPassword`；密码只保存在受限临时 artifact 或当前会话中，不在最终回复展示。
+  5. 只为受限来源 CIDR 创建临时 TCP 22 入站规则；来源应是用户给定管理员 IP、当前执行环境 `/32`、VPN/办公网或跳板机来源，不要为了省事开放全网。
+  6. 用 `sshpass`/SSH 依次验证 root 和镜像默认用户；若 `Permission denied` 且 `user_data` 或 sshd 配置显示禁用密码登录，不要重复 reset password。
+  7. 对本轮新建、演示、测试或可替换部署资源，若 key/password 都不可用且 COC 不可用，直接重装或同名重建为可纳管实例：保存 private key，并在 cloud-init 中完成目标服务、挂载脚本和 SSH 配置。重建前确认该资源不是用户明确要求保留数据的生产资源。
+  8. 登录成功后执行幂等机内脚本，完成格式化挂载、服务启动、日志采集和验收。
+  9. 验收通过后删除临时 SSH 入站规则；若因后续维护需要保留，最终输出规则 ID 和原因。
+- SSH/recreate fallback 不应用于删除、读取用户隐私数据、扩大业务端口暴露面，或用户明确要求只读的场景。
+- 如果 COC 不可用、无可用 key/托管私钥、密码登录被系统策略拒绝、且不能在当前任务边界内重建/重装，再停止无效重试并说明最小缺口。
+- ELB member `OFFLINE` 且后端端口 `connection refused` 时，结论应是“负载均衡云侧配置已完成，后端服务未启动”；只有实际启动服务并看到 member `ONLINE` 与入口 HTTP 200 后，才能说任务完成。
+- EVS volume `in-use` 只表示云侧已挂载；只有 `df -h <mountpoint>` 和写入测试成功，才能说目录可用。
 
 ## 什么时候使用
 
