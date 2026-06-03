@@ -105,6 +105,31 @@ hcloud configure list
 和 EIP 的当前状态，说明公网 IP、绑定关系和仍需处理的问题。
 ```
 
+#### 用拓扑图沟通方案或结果
+
+```text
+使用 huaweicloud-skill 先画一个 Mermaid 资源拓扑图，帮我确认公网访问、
+EIP、安全组、ECS、EVS、IMS 和监控之间的关系。计划态和已查询到的事实要分开标注。
+```
+
+示例输出形态：
+
+```mermaid
+flowchart LR
+  Internet["公网访问"]
+  EIP["EIP\n110.41.114.207\nBIND_ACTIVE"]
+  SG["安全组 default\nTCP 80: 203.0.113.0/24\nTCP 22: 203.0.113.10/32"]
+  ECS["ECS wordpress-server\n192.168.1.186\nACTIVE"]
+  EVS["系统盘 EVS\nin-use"]
+  IMS["IMS 镜像\nUbuntu 22.04"]
+  CES["CES 云监控\n监控中"]
+
+  Internet --> EIP --> SG --> ECS
+  ECS --> EVS
+  IMS -.创建来源.-> ECS
+  ECS --> CES
+```
+
 ## 能力亮点
 
 - **CLI-first**：优先基于本机 `hcloud` 的真实 service、operation 和 help 信息工作，减少凭空猜测。
@@ -113,6 +138,7 @@ hcloud configure list
 - **安全执行封装**：统一处理超时、敏感信息脱敏、JSON 解析、错误分类和输出裁剪。
 - **变更门禁**：变更类流程默认包含 dry-run、风险识别、显式确认、执行记录和变更后验证。
 - **入口暴露限制**：SSH `22` 和常见 Web 端口 `80`、`443`、`3000`、`5000`、`8000`、`8080` 的入方向规则会阻止 `0.0.0.0/0`。
+- **拓扑图沟通**：必要时用 Mermaid 资源拓扑图展示需求、方案、结果或排障链路，并区分计划态和已验证事实。
 - **开发者友好**：架构、扩展方式、服务覆盖策略和脚本契约都沉淀在 `docs/` 中，便于继续贡献。
 
 ## 你需要告诉 Agent 什么

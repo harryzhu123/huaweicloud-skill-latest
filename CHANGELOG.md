@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3 - 2026-06-03
+
+- Added guidance to use Mermaid resource topology diagrams when clarifying requirements, confirming plans, presenting results, or debugging cloud connectivity.
+- Documented that diagrams must distinguish planned resources from verified facts and should focus on key resource fields, bindings, ports, CIDRs, and blockers.
+- Added a README example showing a public access -> EIP -> security group -> ECS topology with EVS, IMS, and CES relationships.
+
 ## 0.2.2 - 2026-06-03
 
 - Added a security group ingress policy that blocks `0.0.0.0/0` for SSH `22` and common Web ports `80`, `443`, `3000`, `5000`, `8000`, and `8080`.
