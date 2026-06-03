@@ -1,5 +1,34 @@
 # Release Notes
 
+## v0.2.2 / 0.2.2 - 2026-06-03
+
+v0.2.2 is a safety and communication patch release on top of v0.2.1. It strengthens ECS login readiness, tightens security group ingress behavior, and adds Mermaid topology diagrams as a standard way to clarify cloud resource relationships with users.
+
+### Changes Since v0.2.1
+
+- Adds an ECS SSH credential readiness flow:
+  - Linux ECS creation must choose exactly one login mode: `key_name` with a locally available private key, or `adminPass` saved to a restricted local credential artifact.
+  - ECS `ACTIVE` is no longer enough to call a server login-ready; agents must validate SSH with the selected credential before reporting that login is ready.
+  - Password-based Linux ECS creation must not rely on retrieving the root password after creation.
+- Adds a guarded security group fallback for restricted accounts:
+  - If `CreateSecurityGroupRule` / `vpc:securityGroupRules:create` is explicitly denied by SCP or IAM, agents should stop retrying the forbidden operation.
+  - Agents may reuse an existing security group only when it matches the required VPC, enterprise project, target ports, and risk boundary; any naming difference must be explained in the final result.
+- Blocks unsafe SSH/Web ingress:
+  - Security group ingress rules for SSH `22` and common Web ports `80`, `443`, `3000`, `5000`, `8000`, and `8080` must not use `0.0.0.0/0`.
+  - `hcloud_change_plan.py`, service change plans, guarded VPC flows, and ECS create JSON validation now surface these violations before dry-run or submit.
+  - SSH, VPC, and ELB playbooks now require restricted source CIDRs for exposed SSH/Web ports.
+- Adds Mermaid resource topology guidance:
+  - Agents can use Mermaid `flowchart` diagrams to clarify requirements, confirm plans, present task results, or debug connectivity.
+  - Diagrams must distinguish planned resources from verified facts and should focus on resource type, name, short ID, IP, status, port, CIDR, security group source, binding relationship, and blockers.
+  - README includes a public access -> EIP -> security group -> ECS topology example with EVS, IMS, and CES relationships.
+
+### Validation
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover tests`: 102 tests passed.
+- `git diff --check`: passed.
+- Planner smoke for `22` + `0.0.0.0/0`: returned `success=false` and generated no submit commands.
+- Planner smoke for `22` + `203.0.113.10/32`: generated the expected dry-run and submit plan.
+
 ## v0.2.1 / 0.2.1 - 2026-05-29
 
 v0.2.1 is a documentation and agent-guidance patch release focused on large hcloud query outputs. It does not change runtime script behavior.

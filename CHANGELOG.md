@@ -1,16 +1,12 @@
 # Changelog
 
-## 0.2.3 - 2026-06-03
-
-- Added guidance to use Mermaid resource topology diagrams when clarifying requirements, confirming plans, presenting results, or debugging cloud connectivity.
-- Documented that diagrams must distinguish planned resources from verified facts and should focus on key resource fields, bindings, ports, CIDRs, and blockers.
-- Added a README example showing a public access -> EIP -> security group -> ECS topology with EVS, IMS, and CES relationships.
-
 ## 0.2.2 - 2026-06-03
 
+- Added an ECS SSH credential readiness flow, including keypair/password selection, local credential artifact requirements, and post-`ACTIVE` SSH validation guidance.
+- Added guidance for reusing existing security groups when `CreateSecurityGroupRule` is blocked by SCP/IAM, while preserving port, VPC, enterprise project, and risk boundaries.
 - Added a security group ingress policy that blocks `0.0.0.0/0` for SSH `22` and common Web ports `80`, `443`, `3000`, `5000`, `8000`, and `8080`.
-- Added offline planner checks so `hcloud_change_plan.py`, service change plans, guarded VPC flows, and ECS create JSON validation surface these violations before dry-run or submit.
-- Updated SSH, VPC, and ELB readiness playbooks plus README guidance to require restricted source CIDRs for exposed SSH/Web ports.
+- Added offline planner checks so `hcloud_change_plan.py`, service change plans, guarded VPC flows, and ECS create JSON validation surface unsafe ingress violations before dry-run or submit.
+- Added Mermaid resource topology guidance for requirement clarification, plan confirmation, result presentation, and troubleshooting.
 
 ## 0.2.1 - 2026-05-29
 
