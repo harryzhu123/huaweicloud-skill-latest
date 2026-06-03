@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Generate local site image assets with Qwen text-to-image.
+"""Generate local site image assets with Huawei Cloud ModelArts MaaS.
 
 This helper is intentionally provider-scoped and cloud-deployment friendly:
-it reads the DashScope key from the environment, downloads generated images
-as local files, and writes a small manifest without credentials.
+it uses Huawei Cloud's MaaS image generation API, reads the MaaS API key from
+the environment, decodes b64_json images as local files, and writes a small
+manifest without credentials.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import base64
 import json
 import mimetypes
 import os
+import ssl
 import sys
 import time
 import urllib.error
@@ -23,58 +25,66 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_MODEL = "qwen-image-2.0-pro"
-DEFAULT_NEGATIVE_PROMPT = (
-    "low resolution, blurry, watermark, logo, readable text, distorted hands, "
-    "unsafe objects, scary mood, copyrighted character"
-)
-ENDPOINTS = {
-    "intl": "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
-    "cn": "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
-}
+DEFAULT_MODEL = "qwen-image"
+DEFAULT_ENDPOINT = "https://api.modelarts-maas.com/v1/images/generations"
+DEFAULT_SIZE = "1024x1024"
+DEFAULT_SEED = 1
+MAX_SEED = 2_147_483_648
 
 
 @dataclass(frozen=True)
 class PromptItem:
-    """One image generation request."""
+    """One Huawei Cloud MaaS image generation request."""
 
     file: str
     prompt: str
     size: str
-    negative_prompt: str
+    seed: int
 
 
 class QwenImageError(RuntimeError):
-    """Raised when Qwen image generation cannot complete."""
+    """Raised when Huawei Cloud MaaS image generation cannot complete."""
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate local image assets using Qwen text-to-image.")
+    parser = argparse.ArgumentParser(description="Generate local image assets using Huawei Cloud ModelArts MaaS.")
     parser.add_argument("--prompt-file", help="JSON file containing prompt items.")
     parser.add_argument("--prompt", help="Single prompt text. Requires --file.")
     parser.add_argument("--file", help="Output file name for --prompt mode.")
     parser.add_argument("--out-dir", required=True, help="Directory where image assets are written.")
     parser.add_argument("--manifest", help="Manifest path. Defaults to <out-dir>/qwen_manifest.json.")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Qwen image model. Default: {DEFAULT_MODEL}.")
-    parser.add_argument(
-        "--endpoint",
-        default="auto",
-        help="Endpoint selector: auto, cn, intl, or a full generation endpoint URL.",
-    )
-    parser.add_argument("--size", default="1328*1328", help="Default image size for items without size.")
-    parser.add_argument("--negative-prompt", default=DEFAULT_NEGATIVE_PROMPT, help="Default negative prompt.")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Huawei Cloud MaaS image model. Default: {DEFAULT_MODEL}.")
+    parser.add_argument("--size", default=DEFAULT_SIZE, help=f"Default image size. Default: {DEFAULT_SIZE}.")
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help=f"Default random seed. Default: {DEFAULT_SEED}.")
     parser.add_argument("--format", choices=["webp", "png"], default="webp", help="Final local image format.")
     parser.add_argument("--overwrite", action="store_true", help="Regenerate even when target exists.")
     parser.add_argument("--dry-run", action="store_true", help="Validate inputs and print the resolved plan without network calls.")
     parser.add_argument("--timeout", type=int, default=240, help="HTTP timeout in seconds.")
+    parser.add_argument("--insecure", action="store_true", help="Disable TLS certificate verification for MaaS API calls.")
     return parser.parse_args(argv)
+
+
+def normalize_size(value: str) -> str:
+    """Return a Huawei MaaS size string such as 1024x1024."""
+    size = value.strip().lower().replace("*", "x")
+    parts = size.split("x")
+    if len(parts) != 2 or not all(part.isdigit() and int(part) > 0 for part in parts):
+        raise QwenImageError(f"Invalid size for Huawei MaaS image generation: {value}")
+    return f"{int(parts[0])}x{int(parts[1])}"
+
+
+def normalize_seed(value: int) -> int:
+    """Validate the Huawei MaaS seed range."""
+    if value < 0 or value > MAX_SEED:
+        raise QwenImageError(f"seed must be in [0, {MAX_SEED}]")
+    return value
 
 
 def load_prompt_items(args: argparse.Namespace) -> list[PromptItem]:
     if args.prompt:
         if not args.file:
             raise QwenImageError("--file is required when using --prompt")
-        raw_items: list[dict[str, Any]] = [{"file": args.file, "prompt": args.prompt, "size": args.size}]
+        raw_items: list[dict[str, Any]] = [{"file": args.file, "prompt": args.prompt, "size": args.size, "seed": args.seed}]
     elif args.prompt_file:
         try:
             data = json.loads(Path(args.prompt_file).read_text(encoding="utf-8"))
@@ -104,8 +114,8 @@ def load_prompt_items(args: argparse.Namespace) -> list[PromptItem]:
             PromptItem(
                 file=target_name,
                 prompt=prompt,
-                size=str(raw.get("size") or args.size),
-                negative_prompt=str(raw.get("negative_prompt") or args.negative_prompt),
+                size=normalize_size(str(raw.get("size") or args.size)),
+                seed=normalize_seed(int(raw.get("seed", args.seed))),
             )
         )
     return items
@@ -119,42 +129,21 @@ def ensure_suffix(file_name: str, image_format: str) -> str:
     return path.with_suffix(suffix).name
 
 
-def endpoint_candidates(selector: str) -> list[str]:
-    if selector == "auto":
-        return [ENDPOINTS["intl"], ENDPOINTS["cn"]]
-    if selector in ENDPOINTS:
-        return [ENDPOINTS[selector]]
-    parsed = urllib.parse.urlparse(selector)
-    if parsed.scheme in {"http", "https"} and parsed.netloc:
-        return [selector]
-    raise QwenImageError("--endpoint must be auto, cn, intl, or a full URL")
-
-
 def build_payload(model: str, item: PromptItem) -> dict[str, Any]:
+    """Build the Huawei Cloud MaaS image generation request body."""
     return {
         "model": model,
-        "input": {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [{"text": item.prompt}],
-                }
-            ]
-        },
-        "parameters": {
-            "negative_prompt": item.negative_prompt,
-            "prompt_extend": True,
-            "watermark": False,
-            "size": item.size,
-            "n": 1,
-        },
+        "prompt": item.prompt,
+        "size": item.size,
+        "response_format": "b64_json",
+        "seed": item.seed,
     }
 
 
-def call_qwen(api_key: str, endpoint: str, model: str, item: PromptItem, timeout: int) -> dict[str, Any]:
+def call_huawei_maas(api_key: str, model: str, item: PromptItem, timeout: int, insecure: bool) -> dict[str, Any]:
     body = json.dumps(build_payload(model, item), ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
-        endpoint,
+        DEFAULT_ENDPOINT,
         data=body,
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -162,49 +151,35 @@ def call_qwen(api_key: str, endpoint: str, model: str, item: PromptItem, timeout
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    context = ssl._create_unverified_context() if insecure else None
+    with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
         response_body = response.read().decode("utf-8")
     try:
         return json.loads(response_body)
     except json.JSONDecodeError as exc:
-        raise QwenImageError("Qwen response was not JSON") from exc
+        raise QwenImageError("Huawei Cloud MaaS response was not JSON") from exc
 
 
-def extract_image_url(response: dict[str, Any]) -> str:
-    choices = response.get("output", {}).get("choices", [])
-    if isinstance(choices, list):
-        for choice in choices:
-            content = choice.get("message", {}).get("content", []) if isinstance(choice, dict) else []
-            for item in content:
-                if isinstance(item, dict) and isinstance(item.get("image"), str):
-                    return item["image"]
-
-    results = response.get("output", {}).get("results", [])
-    if isinstance(results, list):
-        for item in results:
-            if isinstance(item, dict):
-                for key in ("url", "image"):
-                    if isinstance(item.get(key), str):
-                        return item[key]
-
-    for key in ("image", "url"):
-        value = response.get("output", {}).get(key)
-        if isinstance(value, str):
-            return value
-
-    raise QwenImageError("Qwen response did not contain an image URL")
+def extract_b64_json(response: dict[str, Any]) -> str:
+    """Extract b64_json from Huawei Cloud MaaS image generation response."""
+    data = response.get("data")
+    if isinstance(data, list) and data:
+        item = data[0]
+        if isinstance(item, dict) and isinstance(item.get("b64_json"), str):
+            return item["b64_json"]
+    if isinstance(response.get("b64_json"), str):
+        return response["b64_json"]
+    raise QwenImageError("Huawei Cloud MaaS response did not contain data[0].b64_json")
 
 
-def read_image_bytes(image_url: str, timeout: int) -> tuple[bytes, str | None]:
-    if image_url.startswith("data:"):
-        header, encoded = image_url.split(",", 1)
+def decode_b64_image(value: str) -> tuple[bytes, str | None]:
+    """Decode a raw or data-URI b64 image returned by Huawei Cloud MaaS."""
+    media_type = None
+    encoded = value
+    if value.startswith("data:") and "," in value:
+        header, encoded = value.split(",", 1)
         media_type = header[5:].split(";", 1)[0] or None
-        return base64.b64decode(encoded), media_type
-
-    request = urllib.request.Request(image_url, method="GET")
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        media_type = response.headers.get_content_type()
-        return response.read(), media_type
+    return base64.b64decode(encoded), media_type
 
 
 def write_image(raw: bytes, media_type: str | None, target: Path, image_format: str) -> None:
@@ -213,8 +188,9 @@ def write_image(raw: bytes, media_type: str | None, target: Path, image_format: 
         return
 
     try:
-        from PIL import Image
         from io import BytesIO
+
+        from PIL import Image
 
         with Image.open(BytesIO(raw)) as image:
             if image_format == "webp":
@@ -230,13 +206,13 @@ def write_image(raw: bytes, media_type: str | None, target: Path, image_format: 
 
 def generate_item(
     api_key: str,
-    endpoints: list[str],
     model: str,
     item: PromptItem,
     out_dir: Path,
     image_format: str,
     overwrite: bool,
     timeout: int,
+    insecure: bool,
 ) -> dict[str, Any]:
     target = out_dir / item.file
     if target.exists() and target.stat().st_size > 0 and not overwrite:
@@ -244,73 +220,78 @@ def generate_item(
             "file": item.file,
             "prompt": item.prompt,
             "size": item.size,
+            "seed": item.seed,
             "status": "existing",
         }
 
-    last_error: str | None = None
-    for endpoint in endpoints:
-        try:
-            response = call_qwen(api_key, endpoint, model, item, timeout)
-            image_url = extract_image_url(response)
-            raw, media_type = read_image_bytes(image_url, timeout)
-            write_image(raw, media_type, target, image_format)
-            return {
-                "file": item.file,
-                "prompt": item.prompt,
-                "size": item.size,
-                "status": "generated",
-                "model": model,
-                "endpoint_host": urllib.parse.urlparse(endpoint).netloc,
-                "request_id": response.get("request_id"),
-            }
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            last_error = f"HTTP {exc.code}: {body[:300]}"
-            if exc.code not in {401, 403, 429, 500, 502, 503, 504}:
-                break
-        except Exception as exc:
-            last_error = str(exc)
-    raise QwenImageError(f"Could not generate {item.file}: {last_error}")
+    try:
+        response = call_huawei_maas(api_key, model, item, timeout, insecure)
+        raw, media_type = decode_b64_image(extract_b64_json(response))
+        write_image(raw, media_type, target, image_format)
+        return {
+            "file": item.file,
+            "prompt": item.prompt,
+            "size": item.size,
+            "seed": item.seed,
+            "status": "generated",
+            "model": response.get("model") or model,
+            "endpoint_host": urllib.parse.urlparse(DEFAULT_ENDPOINT).netloc,
+            "created": response.get("created"),
+        }
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise QwenImageError(f"Could not generate {item.file}: HTTP {exc.code}: {body[:300]}") from exc
+    except Exception as exc:
+        raise QwenImageError(f"Could not generate {item.file}: {exc}") from exc
+
+
+def get_api_key() -> str:
+    """Read the Huawei MaaS API key without logging it."""
+    api_key = os.getenv("MAAS_API_KEY", "").strip() or os.getenv("MODELARTS_MAAS_API_KEY", "").strip()
+    if not api_key:
+        raise QwenImageError(
+            "缺少华为云 ModelArts MaaS API Key。请先设置环境变量 MAAS_API_KEY "
+            "或 MODELARTS_MAAS_API_KEY 后重试；不要把 API Key 写进代码、站点文件或 manifest。"
+        )
+    return api_key
 
 
 def main(argv: list[str] | None = None) -> int:
     try:
         args = parse_args(argv)
         items = load_prompt_items(args)
-        endpoints = endpoint_candidates(args.endpoint)
         out_dir = Path(args.out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = Path(args.manifest) if args.manifest else out_dir / "qwen_manifest.json"
 
         plan = {
+            "provider": "Huawei Cloud ModelArts MaaS",
+            "endpoint": DEFAULT_ENDPOINT,
             "model": args.model,
-            "endpoint_count": len(endpoints),
             "out_dir": str(out_dir),
-            "items": [{"file": item.file, "size": item.size, "prompt": item.prompt} for item in items],
+            "items": [{"file": item.file, "size": item.size, "seed": item.seed, "prompt": item.prompt} for item in items],
         }
         if args.dry_run:
             print(json.dumps({"success": True, "dry_run": True, "plan": plan}, ensure_ascii=False, indent=2))
             return 0
 
-        api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
-        if not api_key:
-            raise QwenImageError("Missing DASHSCOPE_API_KEY environment variable")
-
+        api_key = get_api_key()
         manifest = {
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "provider": "Qwen DashScope image generation",
+            "provider": "Huawei Cloud ModelArts MaaS image generation",
+            "endpoint_host": urllib.parse.urlparse(DEFAULT_ENDPOINT).netloc,
             "items": [],
         }
         for item in items:
             result = generate_item(
                 api_key=api_key,
-                endpoints=endpoints,
                 model=args.model,
                 item=item,
                 out_dir=out_dir,
                 image_format=args.format,
                 overwrite=args.overwrite,
                 timeout=args.timeout,
+                insecure=args.insecure,
             )
             manifest["items"].append(result)
             print(f"{result['status']}: {result['file']}", flush=True)

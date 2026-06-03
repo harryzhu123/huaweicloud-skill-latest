@@ -1,6 +1,6 @@
 ---
 name: huaweicloud-skill
-description: 使用 hcloud 命令行工具执行华为云资源查询、分析、规划和变更。适用于用户明确要走 CLI/KooCLI 路线，或任务需要通过 hcloud 直接发现 service/operation、构造命令、执行查询或变更、排查认证、网络、缓存与输出格式问题的场景；当华为云部署静态站、独立站或 Web 应用需要图片素材时，可辅助调用 Qwen 文生图生成本地站点资产。
+description: 使用 hcloud 命令行工具执行华为云资源查询、分析、规划和变更。适用于用户明确要走 CLI/KooCLI 路线，或任务需要通过 hcloud 直接发现 service/operation、构造命令、执行查询或变更、排查认证、网络、缓存与输出格式问题的场景；当华为云部署静态站、独立站或 Web 应用需要图片素材时，可通过华为云 ModelArts MaaS 文生图 API 生成本地站点资产。
 version: "0.2.3"
 ---
 
@@ -9,7 +9,7 @@ version: "0.2.3"
 ## 核心定位
 
 - 这是一套基于 `hcloud` 的华为云执行型 skill。
-- Qwen 文生图只作为华为云 Web/独立站部署的辅助资产生成能力，不作为通用生图入口，也不登记为 KooCLI service。
+- Qwen 文生图只作为华为云 Web/独立站部署的辅助资产生成能力，必须使用华为云 ModelArts MaaS API，不作为通用生图入口，也不登记为 KooCLI service。
 - 目标不是背命令，而是让 agent 能稳定完成一条完整链路：
   - 识别上下文
   - 发现 service 和 operation
@@ -126,7 +126,7 @@ version: "0.2.3"
 - 任务需要直接通过 `hcloud` 查询或变更华为云资源。
 - 任务需要查看 `service` / `operation` 列表、构造 `--cli-jsonInput`、使用 `--cli-query`、`--dryrun`、`--cli-waiter` 等 CLI 能力。
 - 任务需要排查 `hcloud` 的认证、区域、项目、缓存、网络、输出格式问题。
-- 任务是在华为云 ECS/OBS/CDN 等 Web 载体上部署站点，并明确要求用 Qwen 生成站点图片资产。
+- 任务是在华为云 ECS/OBS/CDN 等 Web 载体上部署站点，并明确要求用华为云 MaaS/Qwen 生成站点图片资产。
 
 
 ## 资料入口
@@ -384,28 +384,29 @@ python3 scripts/hcloud_obs_readonly.py \
 
 ### 9.6. Qwen 文生图站点资产生成
 
-仅当华为云 Web/独立站部署需要图片素材时使用；详细流程见 `references/qwen-image-generation.md` 和 `references/playbooks/static-site-generated-assets-readiness.md`。
+仅当华为云 Web/独立站部署需要图片素材时使用；必须走华为云 ModelArts MaaS API：`https://api.modelarts-maas.com/v1/images/generations`。详细流程见 `references/qwen-image-generation.md` 和 `references/playbooks/static-site-generated-assets-readiness.md`。
 
 ```bash
-DASHSCOPE_API_KEY=<key> python3 scripts/qwen_text_to_image.py \
+MAAS_API_KEY=<key> python3 scripts/qwen_text_to_image.py \
   --prompt-file <prompts.json> \
   --out-dir <site-assets-dir> \
-  --model qwen-image-2.0-pro \
-  --endpoint auto \
+  --model qwen-image \
   --format webp
 ```
 
 用途：
 
 - 生成站点 hero、产品图、礼盒图、营销页插图等本地图片资产
-- 自动下载 Qwen 返回的图片为本地 WebP/PNG，避免部署临时外链
-- 写入不含 API key 的 `qwen_manifest.json`，记录文件名、prompt、模型、endpoint host 和 request_id
+- 按华为云 MaaS 请求体发送 `model`、`prompt`、`size`、`response_format=b64_json`、`seed`
+- 自动解码 MaaS 返回的 `data[0].b64_json` 为本地 WebP/PNG，避免部署 raw base64
+- 写入不含 API key 的 `qwen_manifest.json`，记录文件名、prompt、模型、endpoint host 和 created 时间
 - `--dry-run` 可先校验 prompt 文件和输出计划，不发起网络请求
 
 规则：
 
-- API key 只从 `DASHSCOPE_API_KEY` 读取，不写入文件、日志、站点代码或 manifest
+- API key 只从 `MAAS_API_KEY` 或 `MODELARTS_MAAS_API_KEY` 读取，不写入文件、日志、站点代码或 manifest
 - 生成后必须检查图片可读性和视觉质量，再接入 HTML/CSS
+- 如果华为云 MaaS 调用失败，应报告鉴权、配额或服务错误，不要 fallback 到 DashScope 或其他非华为云接口
 - 不把 Qwen 当作 `references/service-registry.json` 中的云服务登记
 
 ### 10. 服务 readiness 检查
@@ -592,7 +593,7 @@ python3 scripts/check_question_coverage.py --pretty
 - ECS 创建类真实提交后，必须先用 `hcloud_ecs_wait_job.py` 或等价 `ShowJob` 查询 job 终态，再用 `hcloud_ecs_verify_active.py` 或等价查询确认目标实例 `ACTIVE`。
 - ECS `ACTIVE` 后必须按 `references/playbooks/ecs-ssh-access-readiness.md` 做 SSH 验收；如果目标任务还包含 Web/Docker/WordPress 等应用，再进入对应服务 readiness。
 - `--cli-waiter` 有重复调用风险，默认只建议用于查询或状态轮询。
-- 华为云站点部署中如需 Qwen 图片资产，先读取 `references/qwen-image-generation.md`，生成本地资产并完成图片质量检查后再部署。
+- 华为云站点部署中如需 Qwen 图片资产，先读取 `references/qwen-image-generation.md`，通过华为云 ModelArts MaaS 生成本地资产并完成图片质量检查后再部署。
 - 如果 live help 因网络或元数据问题失败，改走本地 meta cache 和 `references/`，不要瞎猜参数。
 
 ## 当前首版覆盖
@@ -610,7 +611,7 @@ python3 scripts/check_question_coverage.py --pretty
 - VPC / IMS / KPS / ELB / EVS / NAT / DNS / SCM 等服务的第一层资源级只读查询登记
 - ELB / EVS / NAT / RDS / CCE / CDN / DNS / SCM / CES 的低覆盖查询登记，用于离线数据集回归和前置发现
 - 多服务只读 smoke、planner-only 变更计划和 JSON 结果验收脚本
-- Qwen 文生图辅助脚本，用于华为云站点部署时生成本地 Web 图片资产
+- Qwen 文生图辅助脚本，用于华为云站点部署时通过华为云 ModelArts MaaS 生成本地 Web 图片资产
 - OBS `hcloud obs`/obsutil 只读适配器和 planner-only bucket/lifecycle/policy 变更计划
 - `hcloud_resource_detail_probe.py` 可对 EVS/NAT 等服务做 list-then-detail 抽样，有资源时执行 detail，无资源时结构化 skipped
 

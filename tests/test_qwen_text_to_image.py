@@ -1,4 +1,4 @@
-"""Tests for Qwen image asset generation helper."""
+"""Tests for Huawei MaaS Qwen image asset generation helper."""
 
 from __future__ import annotations
 
@@ -55,10 +55,38 @@ class QwenTextToImageTest(unittest.TestCase):
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 return qwen_text_to_image.main(args)
 
-    def test_extract_image_url_from_choices_response(self) -> None:
-        response = {"output": {"choices": [{"message": {"content": [{"image": "https://example.com/image.png"}]}}]}}
+    def test_build_payload_uses_huawei_maas_shape(self) -> None:
+        item = qwen_text_to_image.PromptItem(
+            file="hero.webp",
+            prompt="A toy store",
+            size="1024x1024",
+            seed=1,
+        )
 
-        self.assertEqual(qwen_text_to_image.extract_image_url(response), "https://example.com/image.png")
+        payload = qwen_text_to_image.build_payload("qwen-image", item)
+
+        self.assertEqual(
+            payload,
+            {
+                "model": "qwen-image",
+                "prompt": "A toy store",
+                "size": "1024x1024",
+                "response_format": "b64_json",
+                "seed": 1,
+            },
+        )
+        self.assertNotIn("input", payload)
+        self.assertNotIn("parameters", payload)
+
+    def test_extract_and_decode_b64_json_data_uri(self) -> None:
+        encoded = "data:image/png;base64," + __import__("base64").b64encode(png_bytes()).decode("ascii")
+        response = {"data": [{"url": None, "b64_json": encoded}]}
+
+        raw, media_type = qwen_text_to_image.decode_b64_image(qwen_text_to_image.extract_b64_json(response))
+
+        self.assertEqual(media_type, "image/png")
+        with Image.open(io.BytesIO(raw)) as image:
+            self.assertEqual(image.size, (8, 6))
 
     def test_dry_run_does_not_require_api_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -78,39 +106,44 @@ class QwenTextToImageTest(unittest.TestCase):
 
     def test_missing_api_key_fails_before_network(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir, mock.patch.dict(os.environ, {}, clear=True):
-            result = self.run_main_silenced(
-                [
-                    "--prompt",
-                    "A toy store",
-                    "--file",
-                    "hero.webp",
-                    "--out-dir",
-                    tmp_dir,
-                ]
-            )
+            with io.StringIO() as stdout, io.StringIO() as stderr:
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    result = qwen_text_to_image.main(
+                        [
+                            "--prompt",
+                            "A toy store",
+                            "--file",
+                            "hero.webp",
+                            "--out-dir",
+                            tmp_dir,
+                        ]
+                    )
+                error_output = stderr.getvalue()
 
         self.assertEqual(result, 1)
+        self.assertIn("缺少华为云 ModelArts MaaS API Key", error_output)
+        self.assertIn("MAAS_API_KEY", error_output)
 
-    def test_endpoint_auto_falls_back_after_401_and_writes_manifest_without_key(self) -> None:
-        calls: list[str] = []
-        image_payload = png_bytes()
-        qwen_response = {
-            "request_id": "request-123",
-            "output": {"choices": [{"message": {"content": [{"image": "https://example.com/generated.png"}]}}]},
+    def test_huawei_maas_call_writes_manifest_without_key(self) -> None:
+        calls: list[dict[str, object]] = []
+        encoded = "data:image/png;base64," + __import__("base64").b64encode(png_bytes()).decode("ascii")
+        maas_response = {
+            "model": "qwen-image",
+            "created": 1780537419677,
+            "data": [{"url": None, "b64_json": encoded}],
+            "usage": {},
+            "error": None,
         }
 
-        def fake_urlopen(request: object, timeout: int = 0) -> FakeHTTPResponse:
-            if hasattr(request, "full_url") and "dashscope-intl" in request.full_url:
-                calls.append("intl")
-                raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", hdrs=None, fp=io.BytesIO(b"bad key"))
-            if hasattr(request, "full_url") and "dashscope.aliyuncs.com" in request.full_url:
-                calls.append("cn")
-                return FakeHTTPResponse(json.dumps(qwen_response).encode("utf-8"))
-            calls.append("image")
-            return FakeHTTPResponse(image_payload, "image/png")
+        def fake_urlopen(request: object, timeout: int = 0, context: object | None = None) -> FakeHTTPResponse:
+            self.assertTrue(hasattr(request, "full_url"))
+            self.assertEqual(request.full_url, qwen_text_to_image.DEFAULT_ENDPOINT)
+            body = json.loads(request.data.decode("utf-8"))
+            calls.append({"url": request.full_url, "body": body, "headers": dict(request.header_items())})
+            return FakeHTTPResponse(json.dumps(maas_response).encode("utf-8"))
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            with mock.patch.dict(os.environ, {"DASHSCOPE_API_KEY": "secret-key"}, clear=True):
+            with mock.patch.dict(os.environ, {"MAAS_API_KEY": "secret-key"}, clear=True):
                 with mock.patch.object(qwen_text_to_image.urllib.request, "urlopen", side_effect=fake_urlopen):
                     result = self.run_main_silenced(
                         [
@@ -120,8 +153,12 @@ class QwenTextToImageTest(unittest.TestCase):
                             "hero.webp",
                             "--out-dir",
                             tmp_dir,
-                            "--endpoint",
-                            "auto",
+                            "--model",
+                            "qwen-image",
+                            "--size",
+                            "1024x1024",
+                            "--seed",
+                            "1",
                         ]
                     )
 
@@ -132,9 +169,20 @@ class QwenTextToImageTest(unittest.TestCase):
                 generated_size = image.size
 
         self.assertEqual(result, 0)
-        self.assertEqual(calls[:3], ["intl", "cn", "image"])
-        self.assertEqual(manifest["items"][0]["model"], qwen_text_to_image.DEFAULT_MODEL)
-        self.assertEqual(manifest["items"][0]["endpoint_host"], "dashscope.aliyuncs.com")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            calls[0]["body"],
+            {
+                "model": "qwen-image",
+                "prompt": "A toy store",
+                "size": "1024x1024",
+                "response_format": "b64_json",
+                "seed": 1,
+            },
+        )
+        self.assertEqual(manifest["provider"], "Huawei Cloud ModelArts MaaS image generation")
+        self.assertEqual(manifest["endpoint_host"], "api.modelarts-maas.com")
+        self.assertEqual(manifest["items"][0]["model"], "qwen-image")
         self.assertNotIn("secret-key", json.dumps(manifest, ensure_ascii=False))
         self.assertEqual(generated_size, (8, 6))
 
@@ -146,6 +194,9 @@ class QwenTextToImageTest(unittest.TestCase):
 
             with self.assertRaises(qwen_text_to_image.QwenImageError):
                 qwen_text_to_image.load_prompt_items(args)
+
+    def test_size_accepts_star_but_normalizes_to_huawei_x_format(self) -> None:
+        self.assertEqual(qwen_text_to_image.normalize_size("1024*1024"), "1024x1024")
 
 
 if __name__ == "__main__":

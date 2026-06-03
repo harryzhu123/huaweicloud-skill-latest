@@ -2,16 +2,22 @@
 
 Use this playbook when deploying a Huawei Cloud static site or independent site that needs generated images.
 
+Generated image assets for this skill must use Huawei Cloud ModelArts MaaS:
+
+- Endpoint: `https://api.modelarts-maas.com/v1/images/generations`
+- Model: `qwen-image`
+- Response format: `b64_json`
+- API key env var: `MAAS_API_KEY`
+
 1. Inventory the site pages and required image slots: hero, product cards, feature bands, thumbnails, and social previews.
-2. Create a prompt file with safe file names, target sizes, and prompts that avoid readable text, watermarks, logos, copyrighted characters, and unsafe product claims.
+2. Create a prompt file with safe file names, target sizes, seeds, and prompts that avoid readable text, watermarks, logos, copyrighted characters, and unsafe product claims.
 3. Generate local assets:
 
 ```bash
-DASHSCOPE_API_KEY=<key> python3 scripts/qwen_text_to_image.py \
+MAAS_API_KEY=<key> python3 scripts/qwen_text_to_image.py \
   --prompt-file <prompts.json> \
   --out-dir <site>/assets \
-  --model qwen-image-2.0-pro \
-  --endpoint auto \
+  --model qwen-image \
   --format webp
 ```
 
@@ -24,4 +30,4 @@ DASHSCOPE_API_KEY=<key> python3 scripts/qwen_text_to_image.py \
 6. Deploy the complete site directory to ECS, OBS, or the chosen Huawei Cloud web surface.
 7. Verify public availability with HTTP status checks and rendered screenshots on desktop and mobile viewports.
 
-Do not report deployment complete until the public page and generated images return successful protocol checks.
+Do not report deployment complete until the public page and generated images return successful protocol checks. Do not fall back to DashScope or other non-Huawei image APIs from this playbook.
