@@ -328,6 +328,15 @@ def first_string_field(mapping: dict[str, Any], keys: tuple[str, ...]) -> str | 
 def extract_cloud_error(parsed_json: Any, stdout: str, stderr: str) -> dict[str, str | None]:
     """Extract cloud error code and message from parsed JSON or text output."""
     for mapping in iter_dicts(parsed_json):
+        has_error_key = any(key in mapping for key in ("error", "error_code", "errorCode", "errCode", "error_msg", "errorMsg"))
+        if isinstance(mapping.get("error"), dict):
+            nested = mapping["error"]
+            code = first_string_field(nested, CLOUD_ERROR_CODE_KEYS)
+            message = first_string_field(nested, CLOUD_ERROR_MESSAGE_KEYS)
+            if code or message:
+                return {"code": code, "message": message, "source": "parsed_json"}
+        if not has_error_key:
+            continue
         code = first_string_field(mapping, CLOUD_ERROR_CODE_KEYS)
         message = first_string_field(mapping, CLOUD_ERROR_MESSAGE_KEYS)
         if code or message:
@@ -347,12 +356,12 @@ def extract_cloud_error(parsed_json: Any, stdout: str, stderr: str) -> dict[str,
         }
 
     code_match = re.search(
-        r'"?(?:error_code|errorCode|code|errCode)"?\s*[:=]\s*"?(?P<code>[A-Za-z0-9_.-]+)"?',
+        r'"(?:error_code|errorCode|errCode)"\s*:\s*"(?P<code>[^"]+)"',
         combined,
         flags=re.IGNORECASE,
     )
     message_match = re.search(
-        r'"?(?:error_msg|errorMsg|message|msg)"?\s*[:=]\s*"(?P<message>[^"\n]+)"',
+        r'"(?:error_msg|errorMsg|message|msg)"\s*:\s*"(?P<message>[^"\n]+)"',
         combined,
         flags=re.IGNORECASE,
     )
@@ -422,20 +431,23 @@ def trim_text(text: str, max_chars: int) -> tuple[str, bool]:
     return text[:max_chars], True
 
 
-def maybe_parse_json(stdout: str) -> tuple[Any | None, str | None]:
+def maybe_parse_json(stdout: str | bytes | None) -> tuple[Any | None, str | None]:
     """Try to parse stdout as JSON."""
+    stdout = coerce_output_text(stdout)
     stripped = stdout.strip()
     if not stripped:
         return None, None
     try:
         return json.loads(stripped), None
     except json.JSONDecodeError as exc:
+        decoder = json.JSONDecoder()
         for marker in ("{", "["):
             marker_index = stripped.find(marker)
-            if marker_index > 0:
+            if marker_index >= 0:
                 candidate = stripped[marker_index:]
                 try:
-                    return json.loads(candidate), None
+                    parsed, _ = decoder.raw_decode(candidate)
+                    return parsed, None
                 except json.JSONDecodeError:
                     continue
         return None, str(exc)
@@ -528,6 +540,8 @@ def main() -> int:
             command,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=args.cwd,
             timeout=args.timeout,
             check=False,
@@ -547,9 +561,11 @@ def main() -> int:
         stdout_trimmed, stdout_truncated = trim_text(redacted_stdout, args.max_output_chars)
         stderr_trimmed, stderr_truncated = trim_text(redacted_stderr, args.max_output_chars)
         error_type = classify_error(raw_stdout, raw_stderr)
-        logical_success = completed.returncode == 0 and error_type is None
-
         redacted_parsed_json = redact_json(parsed_json, known_secrets) if parsed_json is not None else None
+        cloud_error = extract_cloud_error(redacted_parsed_json, redacted_stdout, redacted_stderr)
+        has_cloud_error = bool(cloud_error.get("code") or cloud_error.get("message"))
+        logical_success = completed.returncode == 0 and error_type is None and not has_cloud_error
+
         error_details = None
         if not logical_success:
             error_details = classify_common_error(
