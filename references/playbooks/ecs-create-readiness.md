@@ -184,6 +184,49 @@ python3 scripts/hcloud_ecs_verify_active.py \
 
 如果当前环境下 service 级帮助都因 metadata 失败拿不到，就退回本地缓存和 raw materials，不要直接猜。
 
+## 安全组选择与权限降级
+
+公网应用服务器通常需要同时满足：
+
+- SSH 登录：入方向 TCP 22
+- Web 服务：入方向 TCP 80
+- 可选 HTTPS：入方向 TCP 443
+
+创建 ECS 前先确认目标安全组是否已经具备这些规则：
+
+```bash
+python3 scripts/hcloud_safe_exec.py \
+  --service VPC \
+  --operation ListSecurityGroups \
+  --arg=--cli-output=json \
+  --expect-json \
+  --pretty
+
+python3 scripts/hcloud_safe_exec.py \
+  --service VPC \
+  --operation ListSecurityGroupRules \
+  --arg=--security_group_id.1=<security-group-id> \
+  --arg=--cli-output=json \
+  --expect-json \
+  --pretty
+```
+
+如果目标安全组缺少规则，先按普通变更流程尝试补规则；但遇到明确的 SCP/IAM 拒绝时，例如 `SYS.0403`、`AccessDenied`，或错误消息包含 `vpc:securityGroupRules:create`，不要反复重试同一个补规则动作。
+
+此时允许复用已有安全组，前提是同时满足：
+
+- 与目标 ECS 在同一 VPC 或同一企业项目边界内，且可以绑定到目标子网。
+- 入方向已开放任务要求的端口，例如 TCP 22/80/443。
+- 规则来源范围符合任务风险边界；若是 `0.0.0.0/0`，只在任务明确要求公网 SSH/Web 或用户接受公网暴露时使用。
+- 出方向不限制基础软件安装和健康检查，或已有证据说明服务初始化不依赖外部访问。
+
+复用时，把该安全组 ID 写入 `body.server.security_groups`，不要再创建同名安全组或继续提交被拒绝的 `CreateSecurityGroupRule`。最终回复必须说明：
+
+- 原计划使用或创建的安全组名称。
+- 被拒绝的 operation、错误码和关键消息。
+- 实际复用的安全组名称、ID、规则 ID、端口和来源网段。
+- 这是安全组命名上的偏离，但端口能力和实例可达性已通过验证。
+
 ## 创建命令构造原则
 
 ### 1. 默认不要直接手拼大 body
