@@ -5,7 +5,7 @@ Use this playbook when deploying a Huawei Cloud static site or independent site 
 Generated image assets for this skill must use Huawei Cloud ModelArts MaaS:
 
 - Endpoint: `https://api.modelarts-maas.com/v1/images/generations`
-- Model: `qwen-image`
+- Default model: `qwen-image`; use another model parameter only when the MaaS image generation API supports it and the helper request/response shape remains compatible.
 - Response format: `b64_json`
 - API key env var: `MAAS_API_KEY`
 

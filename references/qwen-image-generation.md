@@ -1,18 +1,21 @@
-# Qwen Image Generation via Huawei Cloud MaaS
+# Image Generation via Huawei Cloud MaaS
 
 Use this reference only when a Huawei Cloud web deployment needs generated bitmap assets, such as static independent sites, product pages, venue pages, or app marketing pages. This is an auxiliary asset workflow, not a KooCLI service.
 
 The required provider is Huawei Cloud ModelArts MaaS. Do not use DashScope endpoints for this skill.
 
+The helper and manifest default names are retained from the original default-model workflow for compatibility; the workflow itself is a MaaS image generation workflow.
+
 ## Required API
 
 - Endpoint: `https://api.modelarts-maas.com/v1/images/generations`
 - Auth: `Authorization: Bearer <MAAS_API_KEY>`
-- Model: `qwen-image`
+- Default model: `qwen-image`
+- Model selection: pass `--model <model>` only when the MaaS image generation API supports that model parameter and the request/response shape is compatible with this helper.
 - Request fields: `model`, `prompt`, `size`, `response_format`, `seed`
 - Required response format: `b64_json`
 
-Canonical request body:
+Canonical request body with the default model:
 
 ```json
 {
@@ -64,6 +67,7 @@ MAAS_API_KEY=<key> python3 scripts/qwen_text_to_image.py \
 - Never write the key into prompts, HTML, CSS, JavaScript, manifest, command journals, logs, or final answers.
 - Keep prompts free of trademarks, copyrighted characters, celebrities, and unsafe child-product claims unless the user has a legitimate approved need.
 - Do not switch to non-Huawei endpoints for this skill. If MaaS is unavailable, report the blocker instead of falling back to DashScope.
+- Keep `qwen-image` as the default model. If another MaaS image generation model is selected, record the model parameter in the manifest and final deployment report.
 
 ## Defaults
 
@@ -73,7 +77,7 @@ MAAS_API_KEY=<key> python3 scripts/qwen_text_to_image.py \
 - Size: `1024x1024`
 - Seed: `1`
 - Final local format: WebP for web pages unless the user explicitly needs PNG.
-- Manifest: `<out-dir>/qwen_manifest.json`
+- Manifest: `<out-dir>/qwen_manifest.json` by default. The file name is retained for compatibility.
 
 ## Failure Handling
 

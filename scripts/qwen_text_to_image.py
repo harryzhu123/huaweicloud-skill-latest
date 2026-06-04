@@ -52,7 +52,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--prompt", help="Single prompt text. Requires --file.")
     parser.add_argument("--file", help="Output file name for --prompt mode.")
     parser.add_argument("--out-dir", required=True, help="Directory where image assets are written.")
-    parser.add_argument("--manifest", help="Manifest path. Defaults to <out-dir>/qwen_manifest.json.")
+    parser.add_argument("--manifest", help="Manifest path. Defaults to <out-dir>/qwen_manifest.json for compatibility.")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Huawei Cloud MaaS image model. Default: {DEFAULT_MODEL}.")
     parser.add_argument("--size", default=DEFAULT_SIZE, help=f"Default image size. Default: {DEFAULT_SIZE}.")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help=f"Default random seed. Default: {DEFAULT_SEED}.")
